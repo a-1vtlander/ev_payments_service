@@ -1,0 +1,42 @@
+name: "EV Charger Portal"
+description: "LAN-local HTTP portal for EV charger session requests via MQTT"
+version: "1.0.0"
+slug: "ev_portal"
+init: false
+
+arch:
+  - aarch64
+  - amd64
+  - armhf
+  - armv7
+
+ports:
+  8080/tcp: 8080
+ports_description:
+  8080/tcp: "EV Portal HTTP interface"
+
+options:
+  mqtt_host: "192.168.4.109"
+  mqtt_port: 1883
+  mqtt_username: "ev-charger-mqtt"
+  mqtt_password: "Uv*6!Mwp@66Lz6i!7atapZk"
+  home_id: "base_lander"
+  charger_id: "chargepoint:home:charger:1"
+  square_sandbox: true
+  square_app_id: "sandbox-sq0idb-d3YNYX4Uu3FOuC5nuWK1KA"
+  square_access_token: "EAAAlwAYpAv5_iEXxRYaU5wUCaQLBhGq8MzvUU20QNACgjk2I0jAfJ00hip2dt-f"
+  square_location_id: ""
+  square_charge_cents: 100
+
+schema:
+  mqtt_host: str
+  mqtt_port: int
+  mqtt_username: str
+  mqtt_password: str
+  home_id: str
+  charger_id: str
+  square_sandbox: bool
+  square_app_id: str
+  square_access_token: str
+  square_location_id: str
+  square_charge_cents: int

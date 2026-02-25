@@ -1,0 +1,15 @@
+# Install production deps first:
+#   pip install -r requirements.txt
+# Then install test deps:
+#   pip install -r requirements-test.txt
+
+pytest==8.3.5
+pytest-asyncio==0.25.3
+httpx==0.28.1
+
+# Integration-test extras (async MQTT subscriber + lifespan trigger)
+# NOTE: integration tests require `mosquitto` on PATH.
+#   macOS:  brew install mosquitto
+#   Debian: apt-get install mosquitto
+aiomqtt==2.5.0
+asgi-lifespan==2.1.0

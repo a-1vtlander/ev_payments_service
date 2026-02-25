@@ -1,0 +1,31 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Test / dev artefacts
+htmlcov/
+.coverage
+coverage.xml
+
+# Secrets / local overrides
+# (dev_options.json contains real creds – keep out of git)
+ev_portal/rootfs/app/tests/dev_options.json
+
+# VS Code
+.vscode/
+
+# macOS
+.DS_Store
