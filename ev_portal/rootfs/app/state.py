@@ -45,6 +45,9 @@ _finalize_session_topic: str = ""        # booking/finalize_session  (subscribe)
 # Square credentials and settings.
 _square_config: dict = {}
 
+# Admin interface config (username, password, port, tls settings).
+_admin_config: dict = {}
+
 # session_uid -> {booking_id, amount_cents}  – one-time tokens issued by /start.
 _pending_sessions: dict[str, dict] = {}
 

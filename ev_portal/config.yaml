@@ -11,32 +11,48 @@ arch:
   - armv7
 
 ports:
-  8080/tcp: 8080
+  8090/tcp: 8090
+  8091/tcp: 8091
 ports_description:
-  8080/tcp: "EV Portal HTTP interface"
+  8090/tcp: "EV Portal guest HTTP interface"
+  8091/tcp: "EV Portal admin HTTPS interface"
 
 options:
-  mqtt_host: "192.168.4.109"
+  mqtt_host: ""
   mqtt_port: 1883
-  mqtt_username: "ev-charger-mqtt"
-  mqtt_password: "Uv*6!Mwp@66Lz6i!7atapZk"
-  home_id: "base_lander"
-  charger_id: "chargepoint:home:charger:1"
+  mqtt_username: ""
+  mqtt_password: ""
+  home_id: ""
+  charger_id: ""
   square_sandbox: true
-  square_app_id: "sandbox-sq0idb-d3YNYX4Uu3FOuC5nuWK1KA"
-  square_access_token: "EAAAlwAYpAv5_iEXxRYaU5wUCaQLBhGq8MzvUU20QNACgjk2I0jAfJ00hip2dt-f"
+  square_app_id: ""
+  square_access_token: ""
   square_location_id: ""
   square_charge_cents: 100
+  admin_enabled: true
+  admin_username: "admin"
+  admin_password: ""
+  admin_port_https: 8091
+  admin_tls_mode: "self_signed"
+  admin_tls_cert_path: ""
+  admin_tls_key_path: ""
 
 schema:
   mqtt_host: str
   mqtt_port: int
   mqtt_username: str
-  mqtt_password: str
+  mqtt_password: password
   home_id: str
   charger_id: str
   square_sandbox: bool
   square_app_id: str
-  square_access_token: str
+  square_access_token: password
   square_location_id: str
   square_charge_cents: int
+  admin_enabled: bool
+  admin_username: str
+  admin_password: password
+  admin_port_https: int
+  admin_tls_mode: str
+  admin_tls_cert_path: str
+  admin_tls_key_path: str

@@ -44,7 +44,7 @@ td:first-child{{font-weight:bold;width:160px;white-space:nowrap}}
   <li><a href="/debug"><code>GET /debug</code></a> – runtime config</li>
   <li><a href="/start"><code>GET /start</code></a> – request a booking session
     <em>(waits up to {int(state.RESPONSE_TIMEOUT)}s for broker response)</em></li>
-  <li><a href="/db"><code>GET /db</code></a> – view session database</li>
+  <li><a href="/admin">Admin interface</a> – session management (HTTPS, requires login)</li>
 </ul>
 </body>
 </html>"""

@@ -7,6 +7,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY rootfs/app/ .
 
-EXPOSE 8080
+EXPOSE 8090
+EXPOSE 8091
 
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8080"]
+CMD ["python", "serve.py"]

@@ -81,11 +81,46 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_sessions_session_id
 ON sessions (session_id)
 """
 
+_CREATE_AUDIT_LOG = """
+CREATE TABLE IF NOT EXISTS audit_log (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts              TEXT NOT NULL,
+    actor           TEXT NOT NULL,
+    action          TEXT NOT NULL,
+    idempotency_key TEXT NOT NULL,
+    reason          TEXT,
+    before_json     TEXT,
+    after_json      TEXT,
+    result_json     TEXT
+)
+"""
+
+_AUDIT_LOG_IDX = """
+CREATE INDEX IF NOT EXISTS idx_audit_log_key
+ON audit_log (idempotency_key)
+"""
+
+
+def _migrate_sessions(conn: sqlite3.Connection) -> None:
+    """Add new columns to existing sessions table without breaking old rows."""
+    existing = {row[1] for row in conn.execute("PRAGMA table_info(sessions)")}
+    new_cols = [
+        ("note",       "TEXT"),
+        ("is_deleted", "INTEGER NOT NULL DEFAULT 0"),
+    ]
+    for col, defn in new_cols:
+        if col not in existing:
+            conn.execute(f"ALTER TABLE sessions ADD COLUMN {col} {defn}")
+            log.info("db migration: added column sessions.%s", col)
+
 
 def _init_db_sync() -> None:
     with _connect() as conn:
         conn.execute(_CREATE_TABLE)
         conn.execute(_CREATE_INDEX_SESSION_ID)
+        conn.execute(_CREATE_AUDIT_LOG)
+        conn.execute(_AUDIT_LOG_IDX)
+        _migrate_sessions(conn)
         conn.commit()
 
 
@@ -290,3 +325,154 @@ def _mark_voided_sync(idempotency_key: str, square_payment_id: str) -> None:
 async def mark_voided(idempotency_key: str, square_payment_id: str) -> None:
     """Set state=VOIDED when the pre-auth hold is cancelled with no charge."""
     await asyncio.to_thread(_mark_voided_sync, idempotency_key, square_payment_id)
+
+
+# ---------------------------------------------------------------------------
+# Admin – DB queries
+# ---------------------------------------------------------------------------
+
+def _list_sessions_sync(
+    limit: int,
+    offset: int,
+    state_filter: Optional[str],
+    include_deleted: bool,
+) -> list:
+    clauses = []
+    params = []
+    if state_filter:
+        clauses.append("state = ?")
+        params.append(state_filter.upper())
+    if not include_deleted:
+        clauses.append("(is_deleted IS NULL OR is_deleted = 0)")
+    where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
+    sql = f"SELECT * FROM sessions {where} ORDER BY updated_at DESC LIMIT ? OFFSET ?"
+    params += [limit, offset]
+    with _connect() as conn:
+        return [dict(r) for r in conn.execute(sql, params).fetchall()]
+
+
+async def list_sessions(
+    limit: int = 50,
+    offset: int = 0,
+    state_filter: Optional[str] = None,
+    include_deleted: bool = False,
+) -> list:
+    """Return sessions ordered by most-recently-updated, with optional filtering."""
+    return await asyncio.to_thread(
+        _list_sessions_sync, limit, offset, state_filter, include_deleted
+    )
+
+
+# ---------------------------------------------------------------------------
+# Admin – DB mutations
+# ---------------------------------------------------------------------------
+
+def _add_note_sync(idempotency_key: str, note: str) -> None:
+    with _connect() as conn:
+        conn.execute(
+            "UPDATE sessions SET note = ?, updated_at = ? WHERE idempotency_key = ?",
+            (note, _now(), idempotency_key),
+        )
+        conn.commit()
+
+
+async def add_note(idempotency_key: str, note: str) -> None:
+    """Persist an operator note on a session record."""
+    await asyncio.to_thread(_add_note_sync, idempotency_key, note)
+
+
+def _soft_delete_sync(idempotency_key: str) -> None:
+    with _connect() as conn:
+        conn.execute(
+            "UPDATE sessions SET is_deleted = 1, updated_at = ? WHERE idempotency_key = ?",
+            (_now(), idempotency_key),
+        )
+        conn.commit()
+
+
+async def soft_delete(idempotency_key: str) -> None:
+    """Mark a session as deleted (is_deleted=1). Row is never physically removed."""
+    await asyncio.to_thread(_soft_delete_sync, idempotency_key)
+
+
+def _mark_canceled_sync(idempotency_key: str, square_payment_id: str) -> None:
+    with _connect() as conn:
+        conn.execute(
+            """UPDATE sessions
+               SET state = 'CANCELED',
+                   square_capture_payment_id = ?,
+                   captured_amount_cents = 0,
+                   updated_at = ?
+               WHERE idempotency_key = ?""",
+            (square_payment_id, _now(), idempotency_key),
+        )
+        conn.commit()
+
+
+async def mark_canceled(idempotency_key: str, square_payment_id: str) -> None:
+    """Set state=CANCELED after an admin-initiated void of a pre-auth."""
+    await asyncio.to_thread(_mark_canceled_sync, idempotency_key, square_payment_id)
+
+
+def _mark_refunded_sync(
+    idempotency_key: str, refund_id: str, amount_cents: int
+) -> None:
+    with _connect() as conn:
+        conn.execute(
+            """UPDATE sessions
+               SET state = 'REFUNDED',
+                   square_capture_payment_id = ?,
+                   captured_amount_cents = ?,
+                   updated_at = ?
+               WHERE idempotency_key = ?""",
+            (refund_id, amount_cents, _now(), idempotency_key),
+        )
+        conn.commit()
+
+
+async def mark_refunded(
+    idempotency_key: str, refund_id: str, amount_cents: int
+) -> None:
+    """Set state=REFUNDED after a successful Square refund."""
+    await asyncio.to_thread(_mark_refunded_sync, idempotency_key, refund_id, amount_cents)
+
+
+# ---------------------------------------------------------------------------
+# Audit log
+# ---------------------------------------------------------------------------
+
+def _write_audit_log_sync(
+    actor: str,
+    action: str,
+    idempotency_key: str,
+    reason: Optional[str],
+    before_json: Optional[str],
+    after_json: Optional[str],
+    result_json: Optional[str],
+) -> None:
+    with _connect() as conn:
+        conn.execute(
+            """INSERT INTO audit_log
+               (ts, actor, action, idempotency_key, reason, before_json, after_json, result_json)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+            (_now(), actor, action, idempotency_key,
+             reason, before_json, after_json, result_json),
+        )
+        conn.commit()
+
+
+async def write_audit_log(
+    actor: str,
+    action: str,
+    idempotency_key: str,
+    reason: Optional[str] = None,
+    before_json: Optional[str] = None,
+    after_json: Optional[str] = None,
+    result_json: Optional[str] = None,
+) -> None:
+    """Append an entry to the audit_log table. Never logs secrets."""
+    await asyncio.to_thread(
+        _write_audit_log_sync,
+        actor, action, idempotency_key,
+        reason, before_json, after_json, result_json,
+    )

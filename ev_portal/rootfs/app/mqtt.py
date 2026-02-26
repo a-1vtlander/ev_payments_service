@@ -15,23 +15,24 @@ import state
 log = logging.getLogger(__name__)
 
 
-def build_mqtt_client(opts: dict, subscribed_topics: list[str]) -> mqtt.Client:
+def build_mqtt_client(mqtt_cfg: dict, subscribed_topics: list) -> mqtt.Client:
     """
     Build and configure a paho MQTT client.
 
+    mqtt_cfg – structured dict with keys: host, port, username, password.
     subscribed_topics – topics to subscribe to in on_connect (so subscriptions
                         survive broker reconnects).
     """
     client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
 
-    username = (opts.get("mqtt_username") or "").strip()
-    password = (opts.get("mqtt_password") or "").strip()
+    username = (mqtt_cfg.get("username") or "").strip()
+    password = (mqtt_cfg.get("password") or "").strip()
     if username:
         client.username_pw_set(username, password or None)
 
     def on_connect(client, userdata, flags, reason_code, properties):
         if reason_code == 0:
-            log.info("MQTT connected to %s:%s", opts.get("mqtt_host"), opts.get("mqtt_port", 1883))
+            log.info("MQTT connected to %s:%s", mqtt_cfg.get("host"), mqtt_cfg.get("port", 1883))
             for topic in subscribed_topics:
                 client.subscribe(topic, qos=1)
                 log.info("Subscribed to: %s", topic)

@@ -513,29 +513,34 @@ async def test_session_json_returns_404_for_missing(unit_client: AsyncClient) ->
 
 
 # ---------------------------------------------------------------------------
-# /db viewer
+# /db viewer – removed; must return 404 on guest server
 # ---------------------------------------------------------------------------
 
-async def test_db_viewer_returns_html(unit_client: AsyncClient) -> None:
+async def test_db_route_removed_returns_404(unit_client: AsyncClient) -> None:
+    """GET /db must return 404 on the guest server – moved to admin-only interface."""
     resp = await unit_client.get("/db")
-    assert resp.status_code == 200
-    assert "text/html" in resp.headers["content-type"]
+    assert resp.status_code == 404
 
 
-async def test_db_viewer_lists_sessions(unit_client: AsyncClient, tmp_db: str) -> None:
-    ik = f"ev:{TEST_CHARGER_ID}:{TEST_BOOKING_ID}"
-    await db.upsert_session({
-        "idempotency_key":         ik,
-        "charger_id":              TEST_CHARGER_ID,
-        "booking_id":              TEST_BOOKING_ID,
-        "session_id":              TEST_SESSION_ID,
-        "state":                   "READY_TO_PAY",
-        "authorized_amount_cents": 100,
-        "square_environment":      "sandbox",
-    })
-    resp = await unit_client.get("/db")
-    assert TEST_BOOKING_ID in resp.text
-    assert "READY_TO_PAY" in resp.text
+# ---------------------------------------------------------------------------
+# /admin redirect
+# ---------------------------------------------------------------------------
+
+async def test_admin_redirect_returns_302(unit_client: AsyncClient) -> None:
+    """GET /admin on guest server returns 302 to the HTTPS admin endpoint."""
+    resp = await unit_client.get("/admin", follow_redirects=False)
+    assert resp.status_code == 302
+    location = resp.headers.get("location", "")
+    assert location.startswith("https://")
+    assert "/admin/" in location
+
+
+async def test_admin_path_redirect_preserves_path(unit_client: AsyncClient) -> None:
+    """GET /admin/sessions on guest server redirects with path preserved."""
+    resp = await unit_client.get("/admin/sessions", follow_redirects=False)
+    assert resp.status_code == 302
+    location = resp.headers.get("location", "")
+    assert "sessions" in location
 
 
 # ---------------------------------------------------------------------------

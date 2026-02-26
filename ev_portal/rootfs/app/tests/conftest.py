@@ -97,9 +97,9 @@ class _StateSnapshot:
     """Save/restore all mutable state.* globals."""
     _ATTRS = (
         "mqtt_client", "_topic_queues", "_session_lock", "_app_config",
-        "_square_config", "_booking_response_topic", "_authorize_request_topic",
-        "_authorize_response_topic", "_finalize_session_topic",
-        "_pending_sessions", "_event_loop",
+        "_square_config", "_admin_config", "_booking_response_topic",
+        "_authorize_request_topic", "_authorize_response_topic",
+        "_finalize_session_topic", "_pending_sessions", "_event_loop",
     )
 
     def __init__(self) -> None:
@@ -138,6 +138,7 @@ async def patched_state(mock_mqtt: MagicMock, tmp_db: str):
     state._session_lock             = asyncio.Lock()
     state._app_config               = {"home_id": TEST_HOME_ID, "charger_id": TEST_CHARGER_ID}
     state._square_config            = _test_square_config()
+    state._admin_config             = {"enabled": False, "username": "admin", "password": "test", "port_https": 8091}
     state._booking_response_topic   = BOOKING_RESPONSE_TOPIC
     state._authorize_request_topic  = AUTHORIZE_REQUEST_TOPIC
     state._authorize_response_topic = AUTHORIZE_RESPONSE_TOPIC
@@ -288,6 +289,14 @@ async def live_client(mosquitto_broker, tmp_path: Path, monkeypatch, tmp_db: str
         "square_access_token":  SANDBOX_TOKEN,
         "square_location_id":   "",            # auto-fetched from Square
         "square_charge_cents":  100,
+        # Admin disabled in integration tests to avoid binding a second port.
+        "admin_enabled":        False,
+        "admin_username":       "admin",
+        "admin_password":       "",
+        "admin_port_https":     8091,
+        "admin_tls_mode":       "self_signed",
+        "admin_tls_cert_path":  "",
+        "admin_tls_key_path":   "",
     }
     options_file = tmp_path / "options.json"
     options_file.write_text(json.dumps(options))

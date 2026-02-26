@@ -1,0 +1,20 @@
+{
+  "mqtt_host": "127.0.0.1",
+  "mqtt_port": 11883,
+  "mqtt_username": "",
+  "mqtt_password": "",
+  "home_id": "my-home",
+  "charger_id": "charger-01",
+  "square_sandbox": true,
+  "square_app_id": "sandbox-sq0idb-YOUR_APP_ID_HERE",
+  "square_access_token": "EAAAlwYOUR_ACCESS_TOKEN_HERE",
+  "square_location_id": "",
+  "square_charge_cents": 100,
+  "admin_enabled": true,
+  "admin_username": "admin",
+  "admin_password": "change-me",
+  "admin_port_https": 8091,
+  "admin_tls_mode": "self_signed",
+  "admin_tls_cert_path": "",
+  "admin_tls_key_path": ""
+}

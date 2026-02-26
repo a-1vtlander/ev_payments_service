@@ -3,15 +3,14 @@ FastAPI lifespan – connects MQTT on startup, disconnects on shutdown.
 """
 
 import asyncio
-import json
 import logging
-import os
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
 import db
 import state
+from config import load_config
 from finalize import finalize_session_consumer
 from mqtt import build_mqtt_client
 from square import fetch_first_location_id
@@ -19,56 +18,39 @@ from square import fetch_first_location_id
 log = logging.getLogger(__name__)
 
 
-def load_options() -> dict:
-    """Load add-on options from options.json (injected by HA Supervisor)."""
-    if not os.path.exists(state.OPTIONS_PATH):
-        log.warning("%s not found – using defaults", state.OPTIONS_PATH)
-        return {}
-    with open(state.OPTIONS_PATH) as f:
-        return json.load(f)
-
-
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # -- Persistent store --------------------------------------------------
     await db.init_db()
 
-    # -- Load config -------------------------------------------------------
-    opts = load_options()
+    # -- Load & validate config --------------------------------------------
+    cfg = load_config()
+    mqtt_cfg   = cfg["mqtt"]
+    square_cfg = cfg["square"]
+    app_cfg    = cfg["app"]
 
-    host = (opts.get("mqtt_host") or "localhost").strip()
-    try:
-        port = int(opts.get("mqtt_port", 1883))
-    except (TypeError, ValueError):
-        log.warning("Invalid mqtt_port in options, falling back to 1883")
-        port = 1883
-
-    home_id    = (opts.get("home_id")    or "base_lander").strip()
-    charger_id = (opts.get("charger_id") or "chargepoint:home:charger:1").strip()
-
-    state._app_config = {"home_id": home_id, "charger_id": charger_id}
+    # Admin config – also set here so that tests using LifespanManager don't
+    # need to go through serve.py.
+    state._admin_config = cfg["admin"]
+    state._app_config   = app_cfg
 
     # Derive all MQTT topics from charger identity.
+    home_id    = app_cfg["home_id"]
+    charger_id = app_cfg["charger_id"]
     base_topic = f"ev/charger/{home_id}/{charger_id}/booking"
     state._booking_response_topic   = f"{base_topic}/response"
     state._authorize_request_topic  = f"{base_topic}/authorize_session"
     state._authorize_response_topic = f"{base_topic}/authorize_session/response"
     state._finalize_session_topic   = f"{base_topic}/finalize_session"
 
-    log.info("Booking request topic  : %s/request_session", base_topic)
-    log.info("Booking response topic : %s", state._booking_response_topic)
-    log.info("Authorize request topic: %s", state._authorize_request_topic)
+    log.info("Booking request topic   : %s/request_session", base_topic)
+    log.info("Booking response topic  : %s", state._booking_response_topic)
+    log.info("Authorize request topic : %s", state._authorize_request_topic)
     log.info("Authorize response topic: %s", state._authorize_response_topic)
-    log.info("Finalize session topic : %s", state._finalize_session_topic)
+    log.info("Finalize session topic  : %s", state._finalize_session_topic)
 
     # ── Square config ──────────────────────────────────────────────────────
-    state._square_config = {
-        "sandbox":      bool(opts.get("square_sandbox", True)),
-        "app_id":       (opts.get("square_app_id")       or "").strip(),
-        "access_token": (opts.get("square_access_token") or "").strip(),
-        "location_id":  (opts.get("square_location_id")  or "").strip(),
-        "charge_cents": int(opts.get("square_charge_cents") or 100),
-    }
+    state._square_config = square_cfg
     log.info(
         "Square sandbox=%s  location_id=%r",
         state._square_config["sandbox"], state._square_config["location_id"],
@@ -94,20 +76,20 @@ async def lifespan(app: FastAPI):
     subscribed_topics = list(state._topic_queues.keys())
 
     # ── MQTT ───────────────────────────────────────────────────────────────
-    state.mqtt_client = build_mqtt_client(opts, subscribed_topics)
+    state.mqtt_client = build_mqtt_client(mqtt_cfg, subscribed_topics)
     try:
-        state.mqtt_client.connect(host, port, keepalive=60)
+        state.mqtt_client.connect(mqtt_cfg["host"], mqtt_cfg["port"], keepalive=60)
         state.mqtt_client.loop_start()
-        log.info("MQTT loop started, connecting to %s:%s", host, port)
+        log.info("MQTT loop started, connecting to %s:%s", mqtt_cfg["host"], mqtt_cfg["port"])
     except Exception as exc:
         log.error("Could not initiate MQTT connection: %s", exc)
 
-    # ── Background tasks ───────────────────────────────────────────────────
+    # ── Background tasks ─────────────────────────────────────────────────────
     _finalize_task = asyncio.create_task(finalize_session_consumer())
 
     yield
 
-    # ── Shutdown ───────────────────────────────────────────────────────────
+    # ── Shutdown ───────────────────────────────────────────────────────────────────
     _finalize_task.cancel()
     await asyncio.gather(_finalize_task, return_exceptions=True)
     log.info("finalize_session_consumer stopped")

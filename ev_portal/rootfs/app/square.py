@@ -12,6 +12,7 @@ import httpx
 import json
 import logging
 import uuid
+from typing import Optional
 
 import state
 
@@ -272,4 +273,51 @@ async def cancel_payment(payment_id: str) -> dict:
             f"{resp.status_code}: {resp.text}"
         )
     return resp.json()["payment"]
+
+
+async def refund_payment(
+    payment_id: str,
+    amount_cents: Optional[int],
+    reason: str = "",
+    idempotency_key: Optional[str] = None,
+) -> dict:
+    """
+    Issue a Square RefundPayment against a completed (captured) payment.
+
+    ``amount_cents=None`` means full refund; Square requires the amount_money
+    field to be present, so we fetch the payment first if amount is not given.
+    Returns the full ``refund`` object from the response.
+    """
+    if amount_cents is None:
+        # Fetch the payment to get the captured amount.
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            pay_resp = await client.get(
+                f"{_base_url()}/v2/payments/{payment_id}", headers=_headers()
+            )
+        pay_resp.raise_for_status()
+        payment = pay_resp.json()["payment"]
+        amount_cents = payment["amount_money"]["amount"]
+
+    url = f"{_base_url()}/v2/refunds"
+    body: dict = {
+        "idempotency_key": idempotency_key or str(uuid.uuid4()),
+        "payment_id":      payment_id,
+        "amount_money": {
+            "amount":   amount_cents,
+            "currency": "USD",
+        },
+    }
+    if reason:
+        body["reason"] = reason
+
+    log.info("POST %s\nRequest body:\n%s", url, json.dumps(body, indent=2))
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        resp = await client.post(url, json=body, headers=_headers())
+    log.info("POST %s -> HTTP %s\nResponse body:\n%s", url, resp.status_code, resp.text)
+
+    if not resp.is_success:
+        raise RuntimeError(
+            f"Square POST /v2/refunds error {resp.status_code}: {resp.text}"
+        )
+    return resp.json()["refund"]
 
