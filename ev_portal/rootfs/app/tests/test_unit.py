@@ -167,7 +167,7 @@ async def test_start_converts_dollars_to_cents(unit_client: AsyncClient) -> None
     assert entry["amount_cents"] == 250
 
 
-async def test_start_writes_ready_to_pay_to_db(unit_client: AsyncClient) -> None:
+async def test_start_writes_awaiting_payment_info_to_db(unit_client: AsyncClient) -> None:
     asyncio.create_task(
         push_after(state._topic_queues[BOOKING_RESPONSE_TOPIC], make_booking_response())
     )
@@ -175,7 +175,7 @@ async def test_start_writes_ready_to_pay_to_db(unit_client: AsyncClient) -> None
     ik = f"ev:{TEST_CHARGER_ID}:{TEST_BOOKING_ID}"
     row = await db.get_session(ik)
     assert row is not None
-    assert row["state"] == "READY_TO_PAY"
+    assert row["state"] == "AWAITING_PAYMENT_INFO"
 
 
 # ---------------------------------------------------------------------------

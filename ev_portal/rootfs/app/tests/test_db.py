@@ -20,7 +20,7 @@ def _base_session(**overrides) -> dict:
         "charger_id":              TEST_CHARGER_ID,
         "booking_id":              TEST_BOOKING_ID,
         "session_id":              TEST_SESSION_ID,
-        "state":                   "READY_TO_PAY",
+        "state":                   "AWAITING_PAYMENT_INFO",
         "authorized_amount_cents": 100,
         "square_environment":      "sandbox",
     }
@@ -49,7 +49,7 @@ async def test_upsert_and_get_session(tmp_db):
     assert row["booking_id"]   == TEST_BOOKING_ID
     assert row["charger_id"]   == TEST_CHARGER_ID
     assert row["session_id"]   == TEST_SESSION_ID
-    assert row["state"]        == "READY_TO_PAY"
+    assert row["state"]        == "AWAITING_PAYMENT_INFO"
 
 
 async def test_get_session_returns_none_for_missing_key(tmp_db):
@@ -65,17 +65,17 @@ async def test_upsert_updates_existing_row(tmp_db):
 
 
 async def test_upsert_does_not_downgrade_authorized(tmp_db):
-    """Once AUTHORIZED, upsert with READY_TO_PAY must not change state."""
+    """Once AUTHORIZED, upsert with AWAITING_PAYMENT_INFO must not change state."""
     await db.upsert_session(_base_session(state="AUTHORIZED"))
-    await db.upsert_session(_base_session(state="READY_TO_PAY"))
+    await db.upsert_session(_base_session(state="AWAITING_PAYMENT_INFO"))
     row = await db.get_session(IK)
     assert row["state"] == "AUTHORIZED"
 
 
 async def test_upsert_does_not_downgrade_captured(tmp_db):
-    """Once CAPTURED, upsert with READY_TO_PAY must not change state."""
+    """Once CAPTURED, upsert with AWAITING_PAYMENT_INFO must not change state."""
     await db.upsert_session(_base_session(state="CAPTURED"))
-    await db.upsert_session(_base_session(state="READY_TO_PAY"))
+    await db.upsert_session(_base_session(state="AWAITING_PAYMENT_INFO"))
     row = await db.get_session(IK)
     assert row["state"] == "CAPTURED"
 

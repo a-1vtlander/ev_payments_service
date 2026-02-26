@@ -285,8 +285,10 @@ async def live_client(mosquitto_broker, tmp_path: Path, monkeypatch, tmp_db: str
         "home_id":              TEST_HOME_ID,
         "charger_id":           TEST_CHARGER_ID,
         "square_sandbox":       True,          # always sandbox
-        "square_app_id":        SANDBOX_APP_ID,
-        "square_access_token":  SANDBOX_TOKEN,
+        "square_sandbox_app_id":        SANDBOX_APP_ID,
+        "square_sandbox_access_token":  SANDBOX_TOKEN,
+        "square_production_app_id":      "",
+        "square_production_access_token": "",
         "square_location_id":   "",            # auto-fetched from Square
         "square_charge_cents":  100,
         # Admin disabled in integration tests to avoid binding a second port.

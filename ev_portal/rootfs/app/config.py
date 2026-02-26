@@ -10,7 +10,7 @@ environment variable ``EV_OPTIONS_PATH`` to point at a different file
 import json
 import logging
 import os
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 import db  # DB_PATH lives here
 import state  # OPTIONS_PATH lives here
@@ -21,8 +21,7 @@ log = logging.getLogger(__name__)
 # mqtt_password is intentionally excluded: anonymous brokers leave it empty.
 _REQUIRED_FIELDS: list = [
     "mqtt_host",
-    "square_app_id",
-    "square_access_token",
+    # square credentials are validated conditionally based on square_sandbox
 ]
 
 _VALID_TLS_MODES = {"self_signed", "provided"}
@@ -39,7 +38,8 @@ def load_config() -> Dict[str, Any]:
     """
     path = state.OPTIONS_PATH
     log.info("Options file : %s", path)
-    log.info("DB path      : %s", db.DB_PATH)
+
+    # db_path is resolved after opts are loaded below.
 
     if not os.path.exists(path):
         raise RuntimeError(
@@ -50,6 +50,15 @@ def load_config() -> Dict[str, Any]:
 
     with open(path) as fh:
         opts: Dict[str, Any] = json.load(fh)
+
+    # ── Apply db_path from options (overrides EV_DB_PATH / default) ──────
+    raw_db_path = (opts.get("db_path") or "").strip()
+    if raw_db_path:
+        # Relative paths are resolved next to the options file.
+        if not os.path.isabs(raw_db_path):
+            raw_db_path = os.path.join(os.path.dirname(os.path.abspath(path)), raw_db_path)
+        db.DB_PATH = raw_db_path
+    log.info("DB path      : %s", db.DB_PATH)
 
     # ── Validate required fields ───────────────────────────────────────────
     missing = [k for k in _REQUIRED_FIELDS if not opts.get(k)]
@@ -70,6 +79,22 @@ def load_config() -> Dict[str, Any]:
 
     sandbox: bool = bool(opts.get("square_sandbox", True))
     charge_cents: int = max(0, int(opts.get("square_charge_cents") or 100))
+
+    # ── Select Square credentials based on environment ────────────────────
+    if sandbox:
+        app_id       = (opts.get("square_sandbox_app_id")       or "").strip()
+        access_token = (opts.get("square_sandbox_access_token") or "").strip()
+        cred_field   = "square_sandbox_app_id / square_sandbox_access_token"
+    else:
+        app_id       = (opts.get("square_production_app_id")       or "").strip()
+        access_token = (opts.get("square_production_access_token") or "").strip()
+        cred_field   = "square_production_app_id / square_production_access_token"
+
+    if not app_id or not access_token:
+        raise RuntimeError(
+            f"square_sandbox={sandbox}: {cred_field} must both be set.  "
+            "Update your add-on configuration."
+        )
 
     home_id    = (opts.get("home_id")    or "").strip()
     charger_id = (opts.get("charger_id") or "").strip()
@@ -125,8 +150,8 @@ def load_config() -> Dict[str, Any]:
         },
         "square": {
             "sandbox":      sandbox,
-            "app_id":       opts["square_app_id"].strip(),
-            "access_token": opts["square_access_token"].strip(),
+            "app_id":       app_id,
+            "access_token": access_token,
             "location_id":  (opts.get("square_location_id") or "").strip(),
             "charge_cents": charge_cents,
         },

@@ -10,14 +10,18 @@ Protected routes (session cookie or Basic Auth):
   GET  /admin/health
   GET  /admin/sessions
   GET  /admin/sessions/{idempotency_key}
+  POST /admin/sessions/{idempotency_key}/capture       (AUTHORIZED → CAPTURED)
+  POST /admin/sessions/{idempotency_key}/void          (AUTHORIZED → CANCELED)
+  POST /admin/sessions/{idempotency_key}/reauthorize   (CAPTURED  → AUTHORIZED)
+  POST /admin/sessions/{idempotency_key}/refund        (CAPTURED  → REFUNDED)
   POST /admin/sessions/{idempotency_key}/note
   POST /admin/sessions/{idempotency_key}/soft_delete
-  POST /admin/sessions/{idempotency_key}/void
-  POST /admin/sessions/{idempotency_key}/refund
 """
 
 import json
 import logging
+import urllib.parse
+import uuid as _uuid
 from typing import Annotated, Optional
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request, status
@@ -48,6 +52,7 @@ _LOGIN_PAGE_TMPL = """<!DOCTYPE html>
 <html>
 <head>
   <meta charset="utf-8">
+  <link rel="icon" href="data:,">
   <title>EV Portal Admin – Login</title>
   <style>
     body{{font-family:sans-serif;max-width:400px;margin:100px auto;padding:0 20px}}
@@ -161,6 +166,7 @@ async def admin_index(actor: Annotated[str, Depends(require_admin)]):
 <html>
 <head>
   <meta charset="utf-8">
+  <link rel="icon" href="data:,">
   <title>EV Portal Admin</title>
   <style>
     body{{font-family:sans-serif;max-width:640px;margin:40px auto;padding:0 20px}}
@@ -171,7 +177,7 @@ async def admin_index(actor: Annotated[str, Depends(require_admin)]):
 </head>
 <body>
   <h1>EV Portal Admin <span class="logout"><a href="/admin/logout">Sign out</a></span></h1>
-  <p>Signed in as <strong>{actor}</strong></p>
+  <p>Signed in as <strong>{actor}</strong><br><small style="color:#888">Buttons for Capture / Void / Refund / Reauthorize appear on individual session detail pages.</small></p>
   <h2>Sessions</h2>
   <ul>
     <li><a href="/admin/sessions">GET /admin/sessions</a> – list all sessions</li>
@@ -214,12 +220,13 @@ async def list_sessions(
     import html as _html
 
     STATE_COLORS = {
-        "CREATED":    "#aaa",
-        "AUTHORIZED": "#1a73e8",
-        "CAPTURED":   "#188038",
-        "CANCELED":   "#c00",
-        "REFUNDED":   "#e37400",
-        "ERROR":      "#c00",
+        "CREATED":                "#aaa",
+        "AWAITING_PAYMENT_INFO":  "#f29900",
+        "AUTHORIZED":             "#1a73e8",
+        "CAPTURED":               "#188038",
+        "CANCELED":               "#c00",
+        "REFUNDED":               "#e37400",
+        "ERROR":                  "#c00",
     }
 
     def badge(s: str) -> str:
@@ -247,11 +254,11 @@ async def list_sessions(
           <td style="text-align:right">{cents(r.get('captured_amount_cents'))}</td>
           <td style="font-size:.8rem">{esc(r.get('created_at',''))}</td>
           <td>{esc(r.get('note',''))}</td>
-          <td><a href="/admin/sessions/{_html.escape(str(r.get('idempotency_key','')))}">detail</a></td>
+          <td><a href="/admin/sessions/{urllib.parse.quote(str(r.get('idempotency_key','')), safe='')}">detail</a></td>
         </tr>"""
 
     filter_opts = ""
-    for st in ("", "CREATED", "AUTHORIZED", "CAPTURED", "CANCELED", "REFUNDED", "ERROR"):
+    for st in ("", "CREATED", "AWAITING_PAYMENT_INFO", "AUTHORIZED", "CAPTURED", "CANCELED", "REFUNDED", "ERROR"):
         sel = 'selected' if (state or "") == st else ""
         filter_opts += f'<option value="{st}" {sel}>{st or "All states"}</option>'
 
@@ -348,24 +355,123 @@ async def get_session(
     )
 
     ik = _html.escape(idempotency_key)
+    url_ik = urllib.parse.quote(idempotency_key, safe='')
     state_val = row.get("state", "")
+    auth_cents   = row.get("authorized_amount_cents") or 0
+    cap_cents    = row.get("captured_amount_cents")   or 0
+    auth_dollars = auth_cents  / 100
+    cap_dollars  = cap_cents   / 100
 
-    void_btn = ""
+    # ── AUTHORIZED actions ─────────────────────────────────────────────────
+    capture_btn = void_btn = ""
     if state_val == "AUTHORIZED":
-        void_btn = f"""<form method="post" action="/admin/sessions/{ik}/void" style="display:inline">
-          <button onclick="return confirm('Void this authorization?')"
-            style="background:#c00;color:#fff;border:none;padding:6px 14px;border-radius:4px;cursor:pointer">
-            Void authorization</button></form>"""
+        capture_btn = f"""
+      <button onclick="document.getElementById('captureDialog').showModal()"
+        style="background:#188038;color:#fff;border:none;padding:6px 14px;border-radius:4px;cursor:pointer">
+        Capture</button>
+      <dialog id="captureDialog" style="border-radius:8px;padding:20px;min-width:320px;border:1px solid #ddd">
+        <h3 style="margin:0 0 8px">Capture payment</h3>
+        <p style="font-size:.85rem;color:#555;margin:0 0 12px">
+          Pre-authorized: <strong>${auth_dollars:.2f}</strong>. Enter the final charge amount.</p>
+        <form method="post" action="/admin/sessions/{url_ik}/capture">
+          <label style="display:block;margin-bottom:10px;font-size:.9rem">Amount&nbsp;($)
+            <input type="number" name="amount_dollars" step="0.01" min="0.01"
+              value="{auth_dollars:.2f}" required autofocus
+              style="display:block;width:100%;box-sizing:border-box;margin-top:4px;
+                     padding:7px 9px;border:1px solid #ccc;border-radius:4px;font-size:1rem">
+          </label>
+          <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px">
+            <button type="button" onclick="this.closest('dialog').close()"
+              style="padding:7px 16px;border:1px solid #ccc;border-radius:4px;cursor:pointer;background:#fff">
+              Cancel</button>
+            <button type="submit"
+              style="background:#188038;color:#fff;border:none;padding:7px 16px;border-radius:4px;cursor:pointer">
+              Confirm capture</button>
+          </div>
+        </form>
+      </dialog>"""
 
-    refund_btn = ""
+        void_btn = f"""
+      <button onclick="document.getElementById('voidDialog').showModal()"
+        style="background:#c00;color:#fff;border:none;padding:6px 14px;border-radius:4px;cursor:pointer">
+        Void</button>
+      <dialog id="voidDialog" style="border-radius:8px;padding:20px;min-width:320px;border:1px solid #ddd">
+        <h3 style="margin:0 0 8px">Void authorization</h3>
+        <p style="font-size:.85rem;color:#555;margin:0 0 12px">
+          This will cancel the pre-auth hold of <strong>${auth_dollars:.2f}</strong>. No charge will be made.</p>
+        <form method="post" action="/admin/sessions/{url_ik}/void">
+          <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px">
+            <button type="button" onclick="this.closest('dialog').close()"
+              style="padding:7px 16px;border:1px solid #ccc;border-radius:4px;cursor:pointer;background:#fff">
+              Cancel</button>
+            <button type="submit"
+              style="background:#c00;color:#fff;border:none;padding:7px 16px;border-radius:4px;cursor:pointer">
+              Confirm void</button>
+          </div>
+        </form>
+      </dialog>"""
+
+    # ── CAPTURED actions ───────────────────────────────────────────────────
+    reauth_btn = refund_btn = ""
     if state_val == "CAPTURED":
-        refund_btn = f"""<form method="post" action="/admin/sessions/{ik}/refund" style="display:inline">
-          <input type="hidden" name="reason" value="Admin refund">
-          <button onclick="return confirm('Full refund?')"
-            style="background:#e37400;color:#fff;border:none;padding:6px 14px;border-radius:4px;cursor:pointer">
-            Full refund</button></form>"""
+        reauth_btn = f"""
+      <button onclick="document.getElementById('reauthDialog').showModal()"
+        style="background:#1a73e8;color:#fff;border:none;padding:6px 14px;border-radius:4px;cursor:pointer">
+        Reauthorize</button>
+      <dialog id="reauthDialog" style="border-radius:8px;padding:20px;min-width:320px;border:1px solid #ddd">
+        <h3 style="margin:0 0 8px">New authorization</h3>
+        <p style="font-size:.85rem;color:#555;margin:0 0 12px">
+          Creates a fresh pre-auth hold on the same stored card.</p>
+        <form method="post" action="/admin/sessions/{url_ik}/reauthorize">
+          <label style="display:block;margin-bottom:10px;font-size:.9rem">Amount&nbsp;($)
+            <input type="number" name="amount_dollars" step="0.01" min="0.01"
+              value="{auth_dollars:.2f}" required autofocus
+              style="display:block;width:100%;box-sizing:border-box;margin-top:4px;
+                     padding:7px 9px;border:1px solid #ccc;border-radius:4px;font-size:1rem">
+          </label>
+          <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px">
+            <button type="button" onclick="this.closest('dialog').close()"
+              style="padding:7px 16px;border:1px solid #ccc;border-radius:4px;cursor:pointer;background:#fff">
+              Cancel</button>
+            <button type="submit"
+              style="background:#1a73e8;color:#fff;border:none;padding:7px 16px;border-radius:4px;cursor:pointer">
+              Authorize</button>
+          </div>
+        </form>
+      </dialog>"""
 
-    note_form = f"""<form method="post" action="/admin/sessions/{ik}/note" style="margin-top:.5rem">
+        refund_btn = f"""
+      <button onclick="document.getElementById('refundDialog').showModal()"
+        style="background:#e37400;color:#fff;border:none;padding:6px 14px;border-radius:4px;cursor:pointer">
+        Refund</button>
+      <dialog id="refundDialog" style="border-radius:8px;padding:20px;min-width:320px;border:1px solid #ddd">
+        <h3 style="margin:0 0 8px">Issue refund</h3>
+        <p style="font-size:.85rem;color:#555;margin:0 0 12px">
+          Captured: <strong>${cap_dollars:.2f}</strong></p>
+        <form method="post" action="/admin/sessions/{url_ik}/refund">
+          <label style="display:block;margin-bottom:10px;font-size:.9rem">Amount&nbsp;($)
+            <input type="number" name="amount_dollars" step="0.01" min="0.01" max="{cap_dollars:.2f}"
+              value="{cap_dollars:.2f}" required
+              style="display:block;width:100%;box-sizing:border-box;margin-top:4px;
+                     padding:7px 9px;border:1px solid #ccc;border-radius:4px;font-size:1rem">
+          </label>
+          <label style="display:block;margin-bottom:10px;font-size:.9rem">Reason
+            <input type="text" name="reason" value="Admin refund" required
+              style="display:block;width:100%;box-sizing:border-box;margin-top:4px;
+                     padding:7px 9px;border:1px solid #ccc;border-radius:4px;font-size:1rem">
+          </label>
+          <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px">
+            <button type="button" onclick="this.closest('dialog').close()"
+              style="padding:7px 16px;border:1px solid #ccc;border-radius:4px;cursor:pointer;background:#fff">
+              Cancel</button>
+            <button type="submit"
+              style="background:#e37400;color:#fff;border:none;padding:7px 16px;border-radius:4px;cursor:pointer">
+              Confirm refund</button>
+          </div>
+        </form>
+      </dialog>"""
+
+    note_form = f"""<form method="post" action="/admin/sessions/{url_ik}/note" style="margin-top:.5rem">
       <input type="text" name="note" placeholder="Add note…"
         style="padding:6px 10px;border:1px solid #ccc;border-radius:4px;width:300px">
       <button type="submit" style="padding:6px 14px;border:1px solid #ccc;border-radius:4px;cursor:pointer">
@@ -374,7 +480,7 @@ async def get_session(
     return HTMLResponse(f"""<!DOCTYPE html>
 <html>
 <head>
-  <meta charset="utf-8">
+  <meta charset="utf-8">  <link rel="icon" href="data:,">  <link rel="icon" href="data:,">
   <title>Session {ik}</title>
   <style>
     body{{font-family:sans-serif;max-width:700px;margin:30px auto;padding:0 20px}}
@@ -383,6 +489,7 @@ async def get_session(
     td{{padding:7px 10px;border:1px solid #ddd;font-size:.9rem}}
     td:first-child{{font-weight:bold;background:#f7f7f7;width:180px;white-space:nowrap}}
     .actions{{margin-top:1rem;display:flex;gap:10px;flex-wrap:wrap;align-items:center}}
+    dialog::backdrop{{background:rgba(0,0,0,.35)}}
     a{{color:#1a73e8}}
   </style>
 </head>
@@ -392,12 +499,141 @@ async def get_session(
   <table>{rows_html}</table>
   <h2>Actions</h2>
   <div class="actions">
+    {capture_btn}
     {void_btn}
+    {reauth_btn}
     {refund_btn}
     {note_form}
   </div>
 </body>
 </html>""")
+
+
+@router.post("/sessions/{idempotency_key}/capture")
+async def capture_session(
+    idempotency_key: str,
+    request: Request,
+    actor: Annotated[str, Depends(require_admin)],
+):
+    """
+    Admin-initiated capture of a pre-auth hold at a specific amount.
+    Accepts JSON { "amount_cents": N } or HTML form { "amount_dollars": "N.NN" }.
+    """
+    ct = request.headers.get("content-type", "")
+    if "application/x-www-form-urlencoded" in ct or "multipart/form-data" in ct:
+        form = await request.form()
+        amount_cents = int(round(float(form.get("amount_dollars", "0")) * 100))
+    else:
+        data = await request.json()
+        amount_cents = data.get("amount_cents") or int(round(float(data.get("amount_dollars", 0)) * 100))
+
+    session = await _get_or_404(idempotency_key)
+    payment_id = session.get("square_payment_id")
+    if not payment_id:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                            detail="Session has no Square payment_id – cannot capture")
+    if session.get("state") != "AUTHORIZED":
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT,
+                            detail=f"State is {session.get('state')!r}; can only capture AUTHORIZED sessions")
+
+    try:
+        result = await square.capture_payment(payment_id, amount_cents)
+    except Exception as exc:
+        log.error("admin capture failed for %s: %s", idempotency_key, exc)
+        await db.write_audit_log(
+            actor=actor, action="capture", idempotency_key=idempotency_key,
+            before_json=json.dumps(session),
+            result_json=json.dumps({"error": str(exc)}),
+        )
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc))
+
+    captured_id = result.get("id", payment_id)
+    await db.mark_captured(idempotency_key, captured_id, amount_cents)
+    after = await db.get_session(idempotency_key)
+    await db.write_audit_log(
+        actor=actor, action="capture", idempotency_key=idempotency_key,
+        before_json=json.dumps(session), after_json=json.dumps(after),
+        result_json=json.dumps(result),
+    )
+
+    if "text/html" in request.headers.get("accept", ""):
+        return RedirectResponse(url=f"/admin/sessions/{urllib.parse.quote(idempotency_key, safe='')}", status_code=303)
+    return {"ok": True, "idempotency_key": idempotency_key,
+            "captured_amount_cents": amount_cents, "square_result": result}
+
+
+@router.post("/sessions/{idempotency_key}/reauthorize")
+async def reauthorize_session(
+    idempotency_key: str,
+    request: Request,
+    actor: Annotated[str, Depends(require_admin)],
+):
+    """
+    Create a fresh Square pre-auth on the same stored card after a session has been captured.
+    Resets the session state to AUTHORIZED with the new payment ID.
+    Accepts JSON { "amount_cents": N } or HTML form { "amount_dollars": "N.NN" }.
+    """
+    ct = request.headers.get("content-type", "")
+    if "application/x-www-form-urlencoded" in ct or "multipart/form-data" in ct:
+        form = await request.form()
+        amount_cents = int(round(float(form.get("amount_dollars", "0")) * 100))
+    else:
+        data = await request.json()
+        amount_cents = data.get("amount_cents") or int(round(float(data.get("amount_dollars", 0)) * 100))
+
+    session = await _get_or_404(idempotency_key)
+    if session.get("state") != "CAPTURED":
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT,
+                            detail=f"State is {session.get('state')!r}; can only reauthorize CAPTURED sessions")
+
+    card_id     = session.get("square_card_id")
+    customer_id = session.get("square_customer_id")
+    if not card_id or not customer_id:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                            detail="No stored card/customer ID on this session – cannot reauthorize")
+
+    # Use a fresh unique key so Square doesn't deduplicate against the original auth.
+    reauth_idem = f"reauth-{idempotency_key[:20]}-{str(_uuid.uuid4())[:8]}"
+
+    try:
+        result = await square.create_payment_authorization(
+            card_id=card_id,
+            customer_id=customer_id,
+            booking_id=reauth_idem,
+            amount_cents=amount_cents,
+        )
+    except Exception as exc:
+        log.error("admin reauthorize failed for %s: %s", idempotency_key, exc)
+        await db.write_audit_log(
+            actor=actor, action="reauthorize", idempotency_key=idempotency_key,
+            before_json=json.dumps(session),
+            result_json=json.dumps({"error": str(exc)}),
+        )
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc))
+
+    new_payment_id = result.get("id")
+    await db.mark_authorized(
+        idempotency_key,
+        square_payment_id=new_payment_id,
+        authorized_amount_cents=amount_cents,
+        square_customer_id=customer_id,
+        square_card_id=card_id,
+        card_brand=session.get("card_brand"),
+        card_last4=session.get("card_last4"),
+        card_exp_month=session.get("card_exp_month"),
+        card_exp_year=session.get("card_exp_year"),
+    )
+    after = await db.get_session(idempotency_key)
+    await db.write_audit_log(
+        actor=actor, action="reauthorize", idempotency_key=idempotency_key,
+        before_json=json.dumps(session), after_json=json.dumps(after),
+        result_json=json.dumps(result),
+    )
+
+    if "text/html" in request.headers.get("accept", ""):
+        return RedirectResponse(url=f"/admin/sessions/{urllib.parse.quote(idempotency_key, safe='')}", status_code=303)
+    return {"ok": True, "idempotency_key": idempotency_key,
+            "new_payment_id": new_payment_id, "amount_cents": amount_cents}
 
 
 @router.post("/sessions/{idempotency_key}/note")
@@ -425,7 +661,7 @@ async def add_note(
     )
 
     if "text/html" in request.headers.get("accept", ""):
-        return RedirectResponse(url=f"/admin/sessions/{idempotency_key}", status_code=303)
+        return RedirectResponse(url=f"/admin/sessions/{urllib.parse.quote(idempotency_key, safe='')}", status_code=303)
     return {"ok": True, "idempotency_key": idempotency_key}
 
 
@@ -445,7 +681,7 @@ async def soft_delete(
     )
 
     if "text/html" in request.headers.get("accept", ""):
-        return RedirectResponse(url=f"/admin/sessions/{idempotency_key}", status_code=303)
+        return RedirectResponse(url=f"/admin/sessions/{urllib.parse.quote(idempotency_key, safe='')}", status_code=303)
     return {"ok": True, "idempotency_key": idempotency_key}
 
 
@@ -492,7 +728,7 @@ async def void_session(
     )
 
     if "text/html" in request.headers.get("accept", ""):
-        return RedirectResponse(url=f"/admin/sessions/{idempotency_key}", status_code=303)
+        return RedirectResponse(url=f"/admin/sessions/{urllib.parse.quote(idempotency_key, safe='')}", status_code=303)
     return {"ok": True, "idempotency_key": idempotency_key, "square_result": result}
 
 
@@ -511,10 +747,14 @@ async def refund_session(
     if "application/x-www-form-urlencoded" in ct or "multipart/form-data" in ct:
         form = await request.form()
         amount_cents: Optional[int] = None
-        raw_amount = form.get("amount_cents")
+        raw_amount = form.get("amount_dollars") or form.get("amount_cents")
         if raw_amount:
             try:
-                amount_cents = int(raw_amount)
+                # Dialog sends amount_dollars; legacy JSON sends amount_cents
+                if form.get("amount_dollars"):
+                    amount_cents = int(round(float(raw_amount) * 100))
+                else:
+                    amount_cents = int(raw_amount)
             except ValueError:
                 pass
         reason: str = str(form.get("reason", ""))
@@ -564,7 +804,7 @@ async def refund_session(
     )
 
     if "text/html" in request.headers.get("accept", ""):
-        return RedirectResponse(url=f"/admin/sessions/{idempotency_key}", status_code=303)
+        return RedirectResponse(url=f"/admin/sessions/{urllib.parse.quote(idempotency_key, safe='')}", status_code=303)
     return {
         "ok": True,
         "idempotency_key": idempotency_key,

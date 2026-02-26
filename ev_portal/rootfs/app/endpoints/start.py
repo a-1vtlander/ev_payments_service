@@ -368,7 +368,7 @@ async def start_session(request: Request):
         "charger_id":              charger_id,
         "booking_id":              booking_id,
         "session_id":              session_uid,
-        "state":                   "READY_TO_PAY",
+        "state":                   "AWAITING_PAYMENT_INFO",
         "authorized_amount_cents": amount_cents,
         "square_environment":      "sandbox" if state._square_config.get("sandbox") else "production",
     })

@@ -1,6 +1,6 @@
 name: "EV Charger Portal"
 description: "LAN-local HTTP portal for EV charger session requests via MQTT"
-version: "1.0.0"
+version: "1.0.2"
 slug: "ev_portal"
 init: false
 
@@ -25,8 +25,10 @@ options:
   home_id: ""
   charger_id: ""
   square_sandbox: true
-  square_app_id: ""
-  square_access_token: ""
+  square_sandbox_app_id: ""
+  square_sandbox_access_token: ""
+  square_production_app_id: ""
+  square_production_access_token: ""
   square_location_id: ""
   square_charge_cents: 100
   admin_enabled: true
@@ -45,8 +47,10 @@ schema:
   home_id: str
   charger_id: str
   square_sandbox: bool
-  square_app_id: str
-  square_access_token: password
+  square_sandbox_app_id: str
+  square_sandbox_access_token: password
+  square_production_app_id: str
+  square_production_access_token: password
   square_location_id: str
   square_charge_cents: int
   admin_enabled: bool
