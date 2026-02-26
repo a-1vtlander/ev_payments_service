@@ -42,7 +42,7 @@ echo $SERVER_PID > /tmp/ev_portal_dev.pid
 sleep 3
 
 echo "Checking guest /start endpoint..."
-curl -sS -D /tmp/ev_portal_curl_headers.txt -o /tmp/ev_portal_start.html http://127.0.0.1:8090/start || true
+curl -sS -k -D /tmp/ev_portal_curl_headers.txt -o /tmp/ev_portal_start.html https://127.0.0.1:8090/start || true
 echo "Guest /start response saved to /tmp/ev_portal_start.html"
 
 echo "Checking admin /admin endpoint (TLS, skipping cert validation)..."

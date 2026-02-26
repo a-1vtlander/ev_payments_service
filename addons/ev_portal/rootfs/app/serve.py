@@ -4,7 +4,7 @@ serve.py – Launch guest (HTTP:8090) and admin (HTTPS:8091) uvicorn servers.
 This is the production and local-dev entry point:
   python serve.py
 
-The guest FastAPI app (main:app) runs on HTTP port 8090 and handles the
+The guest FastAPI app (main:app) runs on HTTPS port 8090 and handles the
 anonymous charger portal.  The admin FastAPI app (admin.app:admin_app) runs
 on HTTPS port 8091, protected by HTTP Basic Auth.
 
@@ -20,7 +20,7 @@ import uvicorn
 
 import state
 from config import load_config
-from tls import ensure_cert
+from tls import ensure_cert, ensure_guest_cert
 
 logging.basicConfig(
     level=logging.INFO,
@@ -40,11 +40,21 @@ async def _serve_all() -> None:
 
     admin_cfg = cfg["admin"]
 
-    # ── Guest server (HTTP) ────────────────────────────────────────────────
+    # ── Guest server (HTTPS) ──────────────────────────────────────────────
+    # HTTPS is required so browsers grant a secure context, which Square's
+    # Web Payments SDK mandates.  Authentication is NOT required on this server.
+    try:
+        guest_cert_path, guest_key_path = ensure_guest_cert()
+    except Exception as exc:
+        log.critical("TLS setup failed for guest server – cannot start: %s", exc)
+        raise
+
     guest_config = uvicorn.Config(
         "main:app",
         host="0.0.0.0",
         port=GUEST_PORT,
+        ssl_certfile=guest_cert_path,
+        ssl_keyfile=guest_key_path,
         log_level="info",
         access_log=True,
     )
@@ -76,7 +86,7 @@ async def _serve_all() -> None:
     else:
         log.info("Admin interface disabled (admin_enabled=false)")
 
-    log.info("Guest server starting on http://0.0.0.0:%s", GUEST_PORT)
+    log.info("Guest server starting on https://0.0.0.0:%s", GUEST_PORT)
 
     await asyncio.gather(*[s.serve() for s in servers])
 

@@ -25,6 +25,7 @@ import uuid as _uuid
 from typing import Annotated, Optional
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request, status
+from fastapi.openapi.docs import get_swagger_ui_html
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from pydantic import BaseModel
 
@@ -116,6 +117,22 @@ async def login_submit(
         return response
     # Bad credentials – redirect back to login with error flag
     return RedirectResponse(url="/admin/login?error=1", status_code=303)
+
+
+@router.get("/openapi.json", include_in_schema=False)
+async def openapi_json(request: Request, actor: Annotated[str, Depends(require_admin)]):
+    """Serve the OpenAPI schema only to authenticated admins."""
+    from admin.app import admin_app
+    return JSONResponse(admin_app.openapi())
+
+
+@router.get("/docs", include_in_schema=False)
+async def swagger_ui(actor: Annotated[str, Depends(require_admin)]):
+    """Serve Swagger UI only to authenticated admins."""
+    return get_swagger_ui_html(
+        openapi_url="/admin/openapi.json",
+        title="EV Portal Admin – API Docs",
+    )
 
 
 @router.get("/logout", include_in_schema=False)

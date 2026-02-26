@@ -22,6 +22,25 @@ log = logging.getLogger(__name__)
 TLS_DIR: str = os.environ.get("EV_TLS_DIR", "/data/tls")
 
 
+def ensure_guest_cert() -> Tuple[str, str]:
+    """
+    Return (cert_path, key_path) for the guest HTTPS server.
+    Always self-signed; stored alongside the admin cert in TLS_DIR.
+    """
+    tls_dir   = TLS_DIR
+    cert_path = os.path.join(tls_dir, "guest.crt")
+    key_path  = os.path.join(tls_dir, "guest.key")
+
+    if os.path.exists(cert_path) and os.path.exists(key_path):
+        log.info("TLS: reusing existing guest self-signed cert at %s", cert_path)
+        return cert_path, key_path
+
+    os.makedirs(tls_dir, exist_ok=True)
+    log.info("TLS: generating new guest self-signed cert in %s", tls_dir)
+    _generate_self_signed(cert_path, key_path)
+    return cert_path, key_path
+
+
 def ensure_cert(admin_cfg: dict) -> Tuple[str, str]:
     """
     Return the (cert_path, key_path) to use for the admin HTTPS server.

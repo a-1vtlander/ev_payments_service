@@ -9,5 +9,12 @@ from fastapi import FastAPI
 
 from admin.router import router
 
-admin_app = FastAPI(title="EV Portal Admin", docs_url="/admin/docs", redoc_url=None)
+# docs_url and openapi_url are disabled here; protected versions are
+# served by the router so they require admin credentials.
+admin_app = FastAPI(
+    title="EV Portal Admin",
+    docs_url=None,
+    redoc_url=None,
+    openapi_url=None,
+)
 admin_app.include_router(router)
