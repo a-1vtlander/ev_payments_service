@@ -1,50 +1,61 @@
-import html
-
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse
 
+import db
 import state
+from portal_templates import templates
 
 router = APIRouter()
 
+_STATE_COLORS = {
+    "AWAITING_PAYMENT_INFO": "#f29900",
+    "AUTH_REQUESTED":        "#f29900",
+    "AUTHORIZED":            "#1a73e8",
+    "CAPTURED":              "#188038",
+    "CANCELED":              "#c00",
+    "REFUNDED":              "#e37400",
+    "FAILED":                "#c00",
+    "ERROR":                 "#c00",
+}
+
 
 @router.get("/", response_class=HTMLResponse)
-async def index():
-    mqtt_status  = "connected" if (state.mqtt_client and state.mqtt_client.is_connected()) else "disconnected"
-    status_color = "green" if mqtt_status == "connected" else "red"
+async def index(request: Request):
+    mqtt_status = "connected" if (state.mqtt_client and state.mqtt_client.is_connected()) else "disconnected"
     home_id    = state._app_config.get("home_id",    "–")
     charger_id = state._app_config.get("charger_id", "–")
-    base_topic = f"ev/charger/{home_id}/{charger_id}/booking"
 
-    return f"""<!DOCTYPE html>
-<html>
-<head><title>EV Charger Portal</title>
-<style>
-body{{font-family:sans-serif;max-width:640px;margin:40px auto;padding:0 20px}}
-code{{background:#f4f4f4;padding:2px 6px;border-radius:3px;word-break:break-all}}
-table{{border-collapse:collapse;width:100%}}
-td{{padding:6px 8px;border:1px solid #ddd}}
-td:first-child{{font-weight:bold;width:160px;white-space:nowrap}}
-</style>
-</head>
-<body>
-<h1>EV Charger Portal</h1>
-<table>
-  <tr><td>MQTT</td><td><strong style="color:{status_color}">{mqtt_status}</strong></td></tr>
-  <tr><td>Home ID</td><td><code>{html.escape(home_id)}</code></td></tr>
-  <tr><td>Charger ID</td><td><code>{html.escape(charger_id)}</code></td></tr>
-  <tr><td>Request topic</td><td><code>{html.escape(base_topic)}/request_session</code></td></tr>
-  <tr><td>Response topic</td><td><code>{html.escape(state._booking_response_topic)}</code></td></tr>
-  <tr><td>Authorize topic</td><td><code>{html.escape(state._authorize_request_topic)}</code></td></tr>
-  <tr><td>Auth response</td><td><code>{html.escape(state._authorize_response_topic)}</code></td></tr>
-</table>
-<h2>Actions</h2>
-<ul>
-  <li><a href="/health"><code>GET /health</code></a> – liveness check</li>
-  <li><a href="/debug"><code>GET /debug</code></a> – runtime config</li>
-  <li><a href="/start"><code>GET /start</code></a> – request a booking session
-    <em>(waits up to {int(state.RESPONSE_TIMEOUT)}s for broker response)</em></li>
-  <li><a href="/admin">Admin interface</a> – session management (HTTPS, requires login)</li>
-</ul>
-</body>
-</html>"""
+    recent = await db.list_sessions(limit=1)
+    session_row = recent[0] if recent else None
+    session_ctx = None
+    if session_row:
+        amount_cents = session_row.get("authorized_amount_cents") or 0
+        cap_cents    = session_row.get("captured_amount_cents")
+        sess_state   = session_row.get("state", "")
+        session_ctx = {
+            "state":        sess_state,
+            "state_color":  _STATE_COLORS.get(sess_state, "#666"),
+            "guest_name":   session_row.get("guest_name") or "",
+            "auth_display": f"${amount_cents / 100:.2f} USD",
+            "cap_display":  f"${cap_cents / 100:.2f} USD" if cap_cents is not None else "",
+            "card_brand":   session_row.get("card_brand") or "",
+            "card_last4":   session_row.get("card_last4") or "",
+            "updated_at":   session_row.get("updated_at") or "",
+        }
+
+    return templates.TemplateResponse(
+        request,
+        "index.html",
+        {
+            "mqtt_status":              mqtt_status,
+            "status_color":             "green" if mqtt_status == "connected" else "red",
+            "home_id":                  home_id,
+            "charger_id":               charger_id,
+            "base_topic":               f"ev/charger/{home_id}/{charger_id}/booking",
+            "booking_response_topic":   state._booking_response_topic,
+            "authorize_request_topic":  state._authorize_request_topic,
+            "authorize_response_topic": state._authorize_response_topic,
+            "response_timeout":         int(state.RESPONSE_TIMEOUT),
+            "session":                  session_ctx,
+        },
+    )

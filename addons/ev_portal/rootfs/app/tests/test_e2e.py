@@ -338,5 +338,5 @@ async def test_e2e_start_returns_session_page_if_already_authorized(
     asyncio.create_task(push_booking())
     resp = await live_client.get("/start")
     assert resp.status_code == 200
-    assert "pay_already_done" in resp.text
+    assert "EV Charger Enabled" in resp.text
     assert "card-container" not in resp.text

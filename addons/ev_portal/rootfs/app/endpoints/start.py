@@ -13,253 +13,53 @@ from fastapi.responses import HTMLResponse
 
 import state
 import square
+from portal_templates import templates
 
 log = logging.getLogger(__name__)
 
 
 def render_card_form(
+    request: Request,
     session_uid: str,
     booking_id: str,
     amount_cents: int,
     *,
     error_message: str = "",
     submit_url: str = "/submit_payment",
-) -> HTMLResponse:
-    """Render the Square Web Payments SDK card form.
+    given_name_hint: str = "",
+    family_name_hint: str = "",
+    booking_is_active: bool = False,
+    booking_start_time: str = "",
+    booking_end_time: str = "",
+    booking_end_display: str = "",
+    rate_display: str = "",
+):
+    """Render the Square Web Payments SDK card form via Jinja2 template.
 
-    Can be called from the initial GET /start and also from POST /submit_payment
-    to redisplay the form with an inline error banner when card processing fails.
+    Called from GET /start (and /enable-ev-session) and, if needed, from
+    POST /submit_payment to redisplay the form with an inline error banner.
     """
-    safe_booking   = html.escape(booking_id)
-    amount_dollars = amount_cents / 100
-    js_url         = square.sdk_js_url()
-    app_id         = html.escape(state._square_config.get("app_id", ""))
-    location_id    = html.escape(state._square_config.get("location_id", ""))
-    safe_uid       = html.escape(session_uid)
-    error_banner   = (
-        f'<div class="error-banner">&#9888;&nbsp;{html.escape(error_message)}</div>'
-        if error_message else ""
+    return templates.TemplateResponse(
+        request,
+        "start.html",
+        {
+            "booking_id":         booking_id,
+            "amount_display":     f"${amount_cents / 100:.2f} USD",
+            "js_url":             square.sdk_js_url(),
+            "app_id":             state._square_config.get("app_id", ""),
+            "location_id":        state._square_config.get("location_id", ""),
+            "session_uid":        session_uid,
+            "submit_url":         submit_url,
+            "error_message":      error_message,
+            "given_name_hint":    given_name_hint,
+            "family_name_hint":   family_name_hint,
+            "booking_is_active":    booking_is_active,
+            "booking_start_time":  booking_start_time,
+            "booking_end_time":    booking_end_time,
+            "booking_end_display": booking_end_display,
+            "rate_display":        rate_display,
+        },
     )
-
-    return HTMLResponse(content=f"""<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>EV Charging Payment</title>
-  <script type="text/javascript" src="{js_url}"></script>
-  <script>
-    // Polyfill: some environments may reference a `browser` global (extensions).
-    // Ensure it exists to avoid "ReferenceError: browser is not defined" in the page.
-    if (typeof browser === 'undefined') {{
-      window.browser = window.browser || {{}};
-    }}
-  </script>
-  <style>
-    * {{ box-sizing: border-box; }}
-    body {{ font-family: sans-serif; max-width: 480px; margin: 50px auto;
-            padding: 0 1rem; color: #222; }}
-    h1   {{ font-size: 1.4rem; margin-bottom: .25rem; }}
-    .sub {{ color: #555; margin-bottom: 1.5rem; font-size: .95rem; }}
-    .info-card {{ background: #f6f8fa; border: 1px solid #d0d7de;
-                  border-radius: 8px; padding: .75rem 1rem; margin-bottom: 1.5rem; }}
-    .label {{ font-size: .72rem; text-transform: uppercase; letter-spacing: .05em;
-              color: #777; margin-bottom: .15rem; }}
-    .value {{ font-family: monospace; font-size: .9rem; }}
-    .name-row {{ display: flex; gap: .75rem; margin-bottom: 1rem; }}
-    .name-row .field {{ flex: 1; display: flex; flex-direction: column; }}
-    .name-row label {{ font-size: .72rem; text-transform: uppercase;
-                       letter-spacing: .05em; color: #777; margin-bottom: .3rem; }}
-    .name-row input {{ padding: .55rem .7rem; border: 1px solid #ccc;
-                       border-radius: 6px; font-size: .95rem; }}
-    .name-row input:focus {{ outline: none; border-color: #006aff; }}
-    #card-container {{ min-height: 90px; margin-bottom: 1.25rem; }}
-    #card-button {{
-      width: 100%; padding: .75rem; background: #006aff; color: #fff;
-      border: none; border-radius: 6px; font-size: 1rem; font-weight: 600;
-      cursor: pointer;
-    }}
-    #card-button:disabled {{ background: #aaa; cursor: not-allowed; }}
-    #card-button:hover:not(:disabled) {{ background: #0055cc; }}
-    #payment-status {{ margin-top: .6rem; font-size: .9rem; color: #555; }}
-    .error-banner {{ background: #fde8e8; border: 1px solid #f5c2c2;
-                     color: #b91c1c; border-radius: 6px; padding: .65rem 1rem;
-                     font-size: .9rem; margin-top: .75rem; line-height: 1.4; }}
-    .note {{ font-size: .8rem; color: #777; margin-top: 1.25rem; }}
-  </style>
-</head>
-<body>
-  <h1>&#9889; EV Charging Authorization</h1>
-  <p class="sub">Enter your card details to place an authorization hold and
-  start your session. You will only be charged for the energy you actually use.</p>
-
-  <div class="info-card">
-    <div class="label">Booking ID</div>
-    <div class="value">{safe_booking}</div>
-  </div>
-  <div class="info-card">
-    <div class="label">Authorization hold amount</div>
-    <div class="value">${amount_dollars:.2f} USD &mdash; adjusted after session</div>
-  </div>
-
-  <div class="name-row">
-    <div class="field">
-      <label for="given-name">First Name</label>
-      <input id="given-name" type="text" placeholder="Jane" autocomplete="given-name">
-    </div>
-    <div class="field">
-      <label for="family-name">Last Name</label>
-      <input id="family-name" type="text" placeholder="Smith" autocomplete="family-name">
-    </div>
-  </div>
-
-  <div id="card-container"></div>
-  <button id="card-button" type="button">Authorize &amp; Start Charging</button>
-  <div id="payment-status"></div>
-  {error_banner}
-
-  <p class="note">
-    This places a temporary hold on your card. Your final charge reflects
-    actual energy consumed; any unused amount is refunded automatically.
-  </p>
-
-  <script>
-    (async () => {{
-      if (!window.Square) {{
-        document.getElementById('payment-status').textContent =
-          'Square Payments SDK failed to load. Please refresh.';
-        return;
-      }}
-
-      const payments = window.Square.payments('{app_id}', '{location_id}');
-      const card = await payments.card();
-      await card.attach('#card-container');
-
-      const escHtml = s => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-
-      const infoCard = (label, val) =>
-        '<div style="background:#f6f8fa;border:1px solid #d0d7de;border-radius:8px;' +
-        'padding:1rem 1.2rem;margin-bottom:1rem;text-align:left">' +
-        '<div style="font-size:.75rem;text-transform:uppercase;color:#777;margin-bottom:.2rem">' +
-        label + '</div>' +
-        '<div style="font-family:monospace;font-size:.9rem;word-break:break-all">' +
-        val + '</div></div>';
-
-      const showBanner = msg => {{
-        let el = document.querySelector('.error-banner');
-        if (!el) {{
-          el = document.createElement('div');
-          el.className = 'error-banner';
-          btn.insertAdjacentElement('afterend', el);
-        }}
-        el.textContent = '\u26a0  ' + msg;
-        el.scrollIntoView({{behavior: 'smooth', block: 'nearest'}});
-      }};
-
-      const btn = document.getElementById('card-button');
-      const status = document.getElementById('payment-status');
-
-      btn.addEventListener('click', async () => {{
-        btn.disabled = true;
-        status.textContent = 'Verifying card...';
-
-        const givenName  = document.getElementById('given-name').value.trim();
-        const familyName = document.getElementById('family-name').value.trim();
-        if (!givenName || !familyName) {{
-          status.textContent = 'Please enter your first and last name.';
-          btn.disabled = false;
-          return;
-        }}
-
-        let tokenResult;
-        try {{
-          tokenResult = await card.tokenize();
-        }} catch (err) {{
-          showBanner('Card tokenization error: ' + err.message);
-          status.textContent = '';
-          btn.disabled = false;
-          return;
-        }}
-
-        if (tokenResult.status !== 'OK') {{
-          const errs = (tokenResult.errors || []).map(e => e.message).join(', ');
-          showBanner('Card error: ' + errs);
-          status.textContent = '';
-          btn.disabled = false;
-          return;
-        }}
-
-        status.textContent = 'Processing...';
-
-        const fd = new FormData();
-        fd.append('source_id', tokenResult.token);
-        fd.append('uid', '{safe_uid}');
-        fd.append('given_name', givenName);
-        fd.append('family_name', familyName);
-
-        let resp, result;
-        try {{
-          resp = await fetch('{submit_url}', {{method: 'POST', body: fd}});
-        }} catch (err) {{
-          showBanner('Network error: could not reach server. ' + err.message);
-          status.textContent = '';
-          btn.disabled = false;
-          return;
-        }}
-
-        try {{
-          result = await resp.json();
-        }} catch (_) {{
-          const text = await resp.text().catch(() => 'no response body');
-          showBanner('Server error (HTTP ' + resp.status + '): ' + text.slice(0, 200));
-          status.textContent = '';
-          btn.disabled = false;
-          return;
-        }}
-
-        status.textContent = '';
-
-        if (result.status === 'card_error') {{
-          showBanner(result.message || 'Card processing failed. Please try a different card.');
-          btn.disabled = false;
-          return;
-        }}
-
-        if (result.status === 'error') {{
-          document.body.innerHTML =
-            '<div style="font-family:sans-serif;max-width:520px;margin:60px auto;padding:0 1rem">' +
-            '<h2>\u274c Error</h2><p>' + escHtml(result.message) + '</p>' +
-            '<p><a href="/">\u2190 Home</a></p></div>';
-          return;
-        }}
-
-        if (result.status === 'success') {{
-          const d = result;
-          const amtStr = '$' + (d.amount_cents / 100).toFixed(2) + ' USD';
-          document.body.innerHTML =
-            '<div style="font-family:sans-serif;max-width:520px;margin:60px auto;' +
-            'padding:0 1rem;color:#222;text-align:center">' +
-            '<div style="font-size:4rem">&#9889;</div>' +
-            '<h1 style="font-size:1.6rem;color:#1a7f3c">EV Charger Enabled</h1>' +
-            '<p style="color:#555;margin-bottom:2rem">Authorization hold placed.<br>' +
-            'You can now plug in your car.</p>' +
-            infoCard('Booking ID', escHtml(d.booking_id)) +
-            infoCard('Authorization hold', escHtml(amtStr)) +
-            infoCard('Square payment ID', escHtml(d.payment_id)) +
-            infoCard('Square card ID', escHtml(d.card_id)) +
-            '<p style="font-size:.82rem;color:#777;margin-top:1.5rem">Pre-auth hold only. ' +
-            'Final charge reflects actual energy used.</p></div>';
-          return;
-        }}
-
-        showBanner('Unexpected response from server. Please try again.');
-        btn.disabled = false;
-      }});
-    }})();
-  </script>
-</body>
-</html>
-""")
 
 
 router = APIRouter()
@@ -344,6 +144,35 @@ async def start_session(request: Request):
     else:
         amount_cents = int(state._square_config.get("charge_cents", 100))
 
+    # -- Guest / booking display fields ------------------------------------
+    booking_is_active = str(parsed.get("booking_is_active", "")).strip().lower() == "on"
+    raw_guest_name    = str(parsed.get("guest_name") or "").strip()
+    # Strip the reservation code parenthetical, e.g. "Taylor Busch (HMT99KRHA5)" → "Taylor Busch"
+    import re as _re
+    clean_name = _re.sub(r'\s*\([^)]*\)\s*$', '', raw_guest_name).strip() or raw_guest_name
+
+    if booking_is_active and clean_name:
+        name_parts   = clean_name.split(None, 1)
+        given_name_hint  = name_parts[0]
+        family_name_hint = name_parts[1] if len(name_parts) > 1 else ""
+    else:
+        given_name_hint  = ""
+        family_name_hint = ""
+
+    booking_start_time = str(parsed.get("booking_start_time") or "").strip()
+    booking_end_time   = str(parsed.get("booking_end_time")   or "").strip()
+    try:
+        _end_dt = datetime.strptime(booking_end_time, "%Y-%m-%d %H:%M:%S")
+        booking_end_display = _end_dt.strftime("%B %-d, %Y")
+    except (ValueError, TypeError):
+        booking_end_display = booking_end_time
+
+    rate_per_kwh = parsed.get("rate_per_kwh")
+    if rate_per_kwh is not None:
+        rate_display = f"${float(rate_per_kwh):.2f}/kWh"
+    else:
+        rate_display = ""
+
     # -- Validate Square config ---------------------------------------------
     if not state._square_config.get("access_token"):
         return HTMLResponse(content="Square access token not configured", status_code=503)
@@ -358,7 +187,7 @@ async def start_session(request: Request):
     existing        = await db.get_session(idempotency_key)
     if existing and existing["state"] in ("AUTHORIZED", "CAPTURED"):
         log.info("Session already authorized for %s, rendering success page", idempotency_key)
-        return render_session_page(existing)
+        return render_session_page(request, existing)
 
     # -- Generate one-time session UID for CSRF/spoof protection -----------
     session_uid = str(uuid.uuid4())
@@ -378,11 +207,20 @@ async def start_session(request: Request):
         "state":                   "AWAITING_PAYMENT_INFO",
         "authorized_amount_cents": amount_cents,
         "square_environment":      "sandbox" if state._square_config.get("sandbox") else "production",
+        "guest_name":              raw_guest_name,
+        "booking_end_time":        booking_end_time,
     })
 
     # -- Render card form ---------------------------------------------------
     return render_card_form(
-        session_uid, booking_id, amount_cents,
+        request, session_uid, booking_id, amount_cents,
         submit_url=str(request.base_url) + "submit_payment",
+        given_name_hint=given_name_hint,
+        family_name_hint=family_name_hint,
+        booking_is_active=booking_is_active,
+        booking_start_time=booking_start_time,
+        booking_end_time=booking_end_time,
+        booking_end_display=booking_end_display,
+        rate_display=rate_display,
     )
 

@@ -72,7 +72,9 @@ CREATE TABLE IF NOT EXISTS sessions (
     -- Audit
     created_at                TEXT NOT NULL,
     updated_at                TEXT NOT NULL,
-    last_error                TEXT
+    last_error                TEXT,
+    guest_name                TEXT,
+    booking_end_time          TEXT
 )
 """
 
@@ -105,8 +107,10 @@ def _migrate_sessions(conn: sqlite3.Connection) -> None:
     """Add new columns to existing sessions table without breaking old rows."""
     existing = {row[1] for row in conn.execute("PRAGMA table_info(sessions)")}
     new_cols = [
-        ("note",       "TEXT"),
-        ("is_deleted", "INTEGER NOT NULL DEFAULT 0"),
+        ("note",             "TEXT"),
+        ("is_deleted",       "INTEGER NOT NULL DEFAULT 0"),
+        ("guest_name",       "TEXT"),
+        ("booking_end_time", "TEXT"),
     ]
     for col, defn in new_cols:
         if col not in existing:

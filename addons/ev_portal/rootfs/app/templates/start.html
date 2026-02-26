@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>EV Charging</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="/static/css/portal.css">
+  <script type="text/javascript" src="{{ js_url }}"></script>
+  <script>
+    /* Polyfill: some WebExtension environments expose a `browser` global that
+       Square's SDK checks for. Ensure it exists to prevent ReferenceErrors. */
+    if (typeof browser === 'undefined') {
+      window.browser = window.browser || {};
+    }
+  </script>
+</head>
+<body>
+
+  <div class="logo-header">
+    <img
+      src="/static/images/Extravio EV Management.webp"
+      alt="Extravio EV Management"
+      class="logo"
+    >
+    <h1 class="header-title">EV Charging</h1>
+    <div class="square-badge">
+      <span class="powered-by">Powered by</span>
+      <img
+        src="/static/images/Square_Logo_2025_White.svg"
+        alt="Secured by Square"
+        class="logo-square"
+      >
+    </div>
+  </div>
+
+  <div class="container">
+  {% if given_name_hint %}
+  <p class="welcome">Welcome, {{ given_name_hint }}!</p>
+  {% endif %}
+
+  <p class="sub">
+    To start charging, please provide payment information below.
+  </p>
+
+  <p class="sub">
+    A temporary authorization of <strong>{{ amount_display }}</strong>. 
+  </p>
+  <p class="sub">
+    Your final charge will be based on your usage at 
+    <strong>{% if rate_display %}{{ rate_display }}{% else %}$0.XX/kWh{% endif %}</strong>.
+  </p>
+
+  {% if booking_is_active and booking_end_display %}
+  <div class="info-card">
+    <div class="label">Charging Period</div>
+    <div class="value">until {{ booking_end_display }}</div>
+  </div>
+  {% endif %}
+
+  <div class="name-row">
+    <div class="field">
+      <label for="given-name">First Name</label>
+      <input id="given-name" type="text" placeholder="Jane" autocomplete="given-name"
+             value="{{ given_name_hint }}">
+    </div>
+    <div class="field">
+      <label for="family-name">Last Name</label>
+      <input id="family-name" type="text" placeholder="Smith" autocomplete="family-name"
+             value="{{ family_name_hint }}">
+    </div>
+  </div>
+
+  <div id="card-container"></div>
+  <button id="card-button" type="button">Authorize &amp; Start Charging</button>
+  <div id="payment-status"></div>
+
+  {% if error_message %}
+  <div class="error-banner">&#9888;&nbsp;{{ error_message }}</div>
+  {% endif %}
+
+  <p class="note">
+    This places a temporary hold on your card. Your final charge reflects
+    actual energy consumed; any unused amount is refunded automatically.
+  </p>
+
+  </div><!-- /.container -->
+
+  <script>
+    window.PAYMENT_CONFIG = {
+      appId:      {{ app_id      | tojson }},
+      locationId: {{ location_id | tojson }},
+      sessionUid: {{ session_uid | tojson }},
+      submitUrl:  {{ submit_url  | tojson }}
+    };
+  </script>
+  <script src="/static/js/payment.js"></script>
+</body>
+</html>

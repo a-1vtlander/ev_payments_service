@@ -199,6 +199,7 @@ async def _submit_payment_impl(source_id, uid, given_name, family_name):
             "payment_id":   payment_id,
             "card_id":      card_id,
             "amount_cents": amount_cents,
+            "session_url":  f"/session/{uid}",
         })
 
     # 7. Charger refused

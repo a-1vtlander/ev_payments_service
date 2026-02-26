@@ -202,8 +202,8 @@ async def test_start_renders_session_page_if_already_authorized(
     )
     resp = await unit_client.get("/start")
     assert resp.status_code == 200
-    # Should render the "EV Charger Enabled" page: has payment ID but no card form
-    assert "pay_existing" in resp.text
+    # Should render the "EV Charger Enabled" page: booking ID present, no card form
+    assert "EV Charger Enabled" in resp.text
     assert "card-container" not in resp.text   # card form SDK element absent
 
 
@@ -476,7 +476,7 @@ async def test_session_html_returns_200(unit_client: AsyncClient, tmp_db: str) -
     resp = await unit_client.get(f"/session/{TEST_SESSION_ID}")
     assert resp.status_code == 200
     assert "text/html" in resp.headers["content-type"]
-    assert TEST_BOOKING_ID in resp.text
+    assert "EV Charger Enabled" in resp.text
 
 
 async def test_session_html_returns_404_for_missing(unit_client: AsyncClient) -> None:

@@ -1,0 +1,162 @@
+/* ── reset ───────────────────────────────────────────────────────────────── */
+* { box-sizing: border-box; }
+
+/* ── page ────────────────────────────────────────────────────────────────── */
+body {
+  font-family: sans-serif;
+  margin: 0;
+  padding: 0;
+  color: #222;
+}
+
+/* ── logo (full-bleed header) ────────────────────────────────────────────── */
+.logo-header {
+  width: 100%;
+  background: #1e293b;
+  padding: .65rem 1.25rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.logo {
+  height: 80px;
+  width: auto;
+}
+
+.logo-square {
+  height: 32px;
+  width: auto;
+}
+
+.square-badge {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: .15rem;
+}
+
+.powered-by {
+  color: rgba(255,255,255,.6);
+  font-size: .6rem;
+  text-transform: uppercase;
+  letter-spacing: .08em;
+}
+
+.header-title {
+  color: #fff;
+  font-size: 1.7rem;
+  font-weight: 600;
+  letter-spacing: .03em;
+  margin: 0;
+  text-align: center;
+  flex: 1;
+}
+
+/* ── content container ───────────────────────────────────────────────────── */
+.container {
+  max-width: 480px;
+  margin: 1.5rem auto 50px;
+  padding: 0 1rem;
+}
+
+/* ── headings / sub ──────────────────────────────────────────────────────── */
+h1      { font-size: 1.4rem; margin-bottom: .25rem; }
+.welcome {
+  font-size: 1.3rem;
+  font-weight: 700;
+  color: #1a1a1a;
+  margin: 0 0 .4rem;
+  letter-spacing: -.01em;
+}
+.sub { color: #555; margin-bottom: 1.5rem; font-size: .95rem; }
+
+/* ── info cards ──────────────────────────────────────────────────────────── */
+.info-card {
+  background: #f6f8fa;
+  border: 1px solid #d0d7de;
+  border-radius: 8px;
+  padding: .75rem 1rem;
+  margin-bottom: 1.5rem;
+}
+.label {
+  font-size: .72rem;
+  text-transform: uppercase;
+  letter-spacing: .05em;
+  color: #777;
+  margin-bottom: .15rem;
+}
+.value { font-family: monospace; font-size: .9rem; }
+
+/* ── name row ────────────────────────────────────────────────────────────── */
+.name-row { display: flex; gap: .75rem; margin-bottom: 1rem; }
+.name-row .field { flex: 1; display: flex; flex-direction: column; }
+.name-row label {
+  font-size: .72rem;
+  text-transform: uppercase;
+  letter-spacing: .05em;
+  color: #777;
+  margin-bottom: .3rem;
+}
+.name-row input {
+  padding: .55rem .7rem;
+  border: 1px solid #ccc;
+  border-radius: 6px;
+  font-size: .95rem;
+}
+.name-row input:focus { outline: none; border-color: #006aff; }
+
+/* ── card form ───────────────────────────────────────────────────────────── */
+#card-container { min-height: 90px; margin-bottom: 1.25rem; }
+
+#card-button {
+  width: 100%;
+  padding: .75rem;
+  background: #006aff;
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  font-size: 1rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+#card-button:disabled          { background: #aaa; cursor: not-allowed; }
+#card-button:hover:not(:disabled) { background: #0055cc; }
+
+#payment-status { margin-top: .6rem; font-size: .9rem; color: #555; }
+
+/* ── banners ─────────────────────────────────────────────────────────────── */
+.error-banner {
+  background: #fde8e8;
+  border: 1px solid #f5c2c2;
+  color: #b91c1c;
+  border-radius: 6px;
+  padding: .65rem 1rem;
+  font-size: .9rem;
+  margin-top: .75rem;
+  line-height: 1.4;
+}
+
+/* ── note ────────────────────────────────────────────────────────────────── */
+.note { font-size: .8rem; color: #777; margin-top: 1.25rem; }
+
+/* ── session confirmation ────────────────────────────────────────────────── */
+.session-body {
+  max-width: 520px;
+  margin: 60px auto;
+  padding: 0 1rem;
+  text-align: center;
+}
+.session-icon  { font-size: 4rem; }
+.session-title { font-size: 1.6rem; color: #1a7f3c; margin-bottom: .5rem; }
+.session-sub   { color: #555; margin-bottom: 2rem; }
+
+.session-info-card {
+  background: #f6f8fa;
+  border: 1px solid #d0d7de;
+  border-radius: 8px;
+  padding: .75rem 1.2rem;
+  margin-bottom: 1rem;
+  text-align: left;
+}
+.session-info-card .label { margin-bottom: .2rem; }

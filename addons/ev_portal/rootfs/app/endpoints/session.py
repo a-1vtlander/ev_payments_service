@@ -6,27 +6,25 @@ Only non-sensitive display fields are rendered (no PAN, CVV, or raw tokens).
 Also exposes GET /session/{session_id}/json for programmatic access.
 """
 
-import html
 import logging
+import re
+from datetime import datetime
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 
 import db
+from portal_templates import templates
 
 log = logging.getLogger(__name__)
 router = APIRouter()
 
 
-def render_session_page(row: dict) -> HTMLResponse:
+def render_session_page(request: Request, row: dict):
     """Render the 'EV Charger Enabled' confirmation page from a DB session row."""
-    booking_id   = html.escape(str(row.get("booking_id")   or ""))
-    payment_id   = html.escape(str(row.get("square_payment_id") or ""))
-    card_id      = html.escape(str(row.get("square_card_id")    or ""))
     amount_cents = row.get("authorized_amount_cents") or 0
-    amount_str   = f"${amount_cents / 100:.2f} USD"
-    card_brand   = html.escape(str(row.get("card_brand") or ""))
-    card_last4   = html.escape(str(row.get("card_last4") or ""))
+    card_brand   = str(row.get("card_brand") or "")
+    card_last4   = str(row.get("card_last4") or "")
     card_exp     = ""
     if row.get("card_exp_month") and row.get("card_exp_year"):
         card_exp = f"{row['card_exp_month']:02d}/{row['card_exp_year']}"
@@ -36,6 +34,40 @@ def render_session_page(row: dict) -> HTMLResponse:
         card_line = f"{card_brand} ending {card_last4}"
         if card_exp:
             card_line += f" (exp {card_exp})"
+
+    raw_guest_name = str(row.get("guest_name") or "").strip()
+    res_match = re.search(r'\(([^)]*)\)', raw_guest_name)
+    reservation_code = res_match.group(1).strip() if res_match else ""
+    clean_guest_name = re.sub(r'\s*\([^)]*\)\s*$', '', raw_guest_name).strip()
+
+    guest_display = ""
+    if clean_guest_name and reservation_code:
+        guest_display = f"{clean_guest_name} \u2014 {reservation_code}"
+    elif clean_guest_name:
+        guest_display = clean_guest_name
+    elif reservation_code:
+        guest_display = reservation_code
+
+    booking_end_time = str(row.get("booking_end_time") or "").strip()
+    try:
+        _end_dt = datetime.strptime(booking_end_time, "%Y-%m-%d %H:%M:%S")
+        booking_end_display = _end_dt.strftime("%B %-d, %Y")
+    except (ValueError, TypeError):
+        booking_end_display = booking_end_time
+
+    return templates.TemplateResponse(
+        request,
+        "session.html",
+        {
+            "booking_id":          str(row.get("booking_id")        or ""),
+            "amount_display":      f"${amount_cents / 100:.2f} USD",
+            "payment_id":          str(row.get("square_payment_id") or ""),
+            "card_id":             str(row.get("square_card_id")    or ""),
+            "card_line":           card_line,
+            "guest_display":       guest_display,
+            "booking_end_display": booking_end_display,
+        },
+    )
 
     def info_card(label: str, value: str) -> str:
         return (
@@ -83,11 +115,11 @@ def render_session_page(row: dict) -> HTMLResponse:
 
 
 @router.get("/session/{session_id}", response_class=HTMLResponse)
-async def get_session_page(session_id: str):
+async def get_session_page(session_id: str, request: Request):
     row = await db.get_session_by_uid(session_id)
     if row is None:
         raise HTTPException(status_code=404, detail="Session not found")
-    return render_session_page(row)
+    return render_session_page(request, row)
 
 
 @router.get("/session/{session_id}/json")

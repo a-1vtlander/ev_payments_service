@@ -18,10 +18,12 @@ All logic lives in:
 """
 
 import logging
+from pathlib import Path
 
 from fastapi import Request
 from fastapi import FastAPI
 from fastapi.responses import RedirectResponse
+from fastapi.staticfiles import StaticFiles
 
 from lifespan import lifespan
 import state
@@ -34,6 +36,10 @@ logging.basicConfig(
 
 app = FastAPI(title="EV Charger Portal", lifespan=lifespan)
 
+# ── static assets ─────────────────────────────────────────────────────────
+_APP_DIR = Path(__file__).parent
+app.mount("/static", StaticFiles(directory=str(_APP_DIR / "static")), name="static")
+
 app.include_router(index.router)
 app.include_router(health.router)
 app.include_router(debug.router)
@@ -42,9 +48,14 @@ app.include_router(submit_payment.router)
 app.include_router(session.router)
 
 
-# ---------------------------------------------------------------------------
-# Admin redirect – convenience, not a proxy
-# ---------------------------------------------------------------------------
+# ── /enable-ev-session alias ───────────────────────────────────────────────
+@app.get("/enable-ev-session", include_in_schema=False)
+async def enable_ev_session_alias(request: Request):
+    """Friendly alias for /start – same handler, prettier URL for QR codes."""
+    return await start.start_session(request)
+
+
+# ── admin redirect ──────────────────────────────────────────────────────
 
 def _admin_redirect_url(request: Request, path: str = "") -> str:
     """Build https://<host>:8091/admin/<path> from the incoming request Host."""

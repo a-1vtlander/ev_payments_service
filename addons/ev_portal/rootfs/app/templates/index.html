@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>EV Charger Portal</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="/static/css/portal.css">
+</head>
+<body>
+  <div class="logo-header">
+    <img
+      src="/static/images/Extravio EV Management.webp"
+      alt="Extravio EV Management"
+      class="logo"
+    >
+    <h1 class="header-title">EV Charging</h1>
+    <div class="square-badge">
+      <span class="powered-by">Powered by</span>
+      <img
+        src="/static/images/Square_Logo_2025_White.svg"
+        alt="Secured by Square"
+        class="logo-square"
+      >
+    </div>
+  </div>
+
+  <div class="container">
+    <h2>EV Charger Administrative Portal</h2>
+
+    <div class="info-card">
+      <div class="label">MQTT</div>
+      <div class="value" style="color: {{ status_color }}; font-weight: bold">{{ mqtt_status }}</div>
+    </div>
+
+    <div class="info-card">
+      <div class="label">Home ID</div>
+      <div class="value"><code>{{ home_id }}</code></div>
+    </div>
+
+    <div class="info-card">
+      <div class="label">Charger ID</div>
+      <div class="value"><code>{{ charger_id }}</code></div>
+    </div>
+
+    {% if session %}
+    <h2>Current Session</h2>
+    <div class="info-card">
+      <div class="label">State</div>
+      <div class="value" style="color: {{ session.state_color }}; font-weight: bold">{{ session.state }}</div>
+    </div>
+    {% if session.guest_name %}
+    <div class="info-card">
+      <div class="label">Guest</div>
+      <div class="value">{{ session.guest_name }}</div>
+    </div>
+    {% endif %}
+    <div class="info-card">
+      <div class="label">Authorization</div>
+      <div class="value">{{ session.auth_display }}</div>
+    </div>
+    {% if session.cap_display %}
+    <div class="info-card">
+      <div class="label">Captured</div>
+      <div class="value">{{ session.cap_display }}</div>
+    </div>
+    {% endif %}
+    {% if session.card_brand or session.card_last4 %}
+    <div class="info-card">
+      <div class="label">Card</div>
+      <div class="value">{{ session.card_brand }} ending {{ session.card_last4 }}</div>
+    </div>
+    {% endif %}
+    <div class="info-card">
+      <div class="label">Last Updated</div>
+      <div class="value">{{ session.updated_at }}</div>
+    </div>
+    {% endif %}
+
+    <h2>End Points</h2>
+    <ul>
+      <li><a href="/start"><code>GET /start</code></a> – customer landing page</li>     
+      <li><a href="/health"><code>GET /health</code></a> – liveness check</li>
+      <li><a href="/debug"><code>GET /debug</code></a> – runtime config</li>
+
+        <em>(waits up to {{ response_timeout }}s for broker response)</em></li>
+      <li><a href="/admin">Admin interface</a> – payment management (requires login)</li>
+    </ul>
+  </div>
+</body>
+</html>

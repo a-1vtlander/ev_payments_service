@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Charging Enabled</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="/static/css/portal.css">
+</head>
+<body class="session-body">
+  <div class="logo-header">
+    <img
+      src="/static/images/Extravio EV Management.webp"
+      alt="Extravio EV Management"
+      class="logo"
+    >
+    <h1 class="header-title">EV Charging</h1>
+    <div class="square-badge">
+      <span class="powered-by">Powered by</span>
+      <img
+        src="/static/images/Square_Logo_2025_White.svg"
+        alt="Secured by Square"
+        class="logo-square"
+      >
+    </div>
+  </div>
+
+
+  <h1 class="session-title">EV Charger Enabled</h1>
+  <p class="session-sub">
+    Authorization complete.<br>You can now plug in your car.
+  </p>
+
+  {% if guest_display %}
+  <div class="session-info-card">
+    <div class="label">Guest</div>
+    <div class="value">{{ guest_display }}</div>
+  </div>
+  {% endif %}
+
+  {% if booking_end_display %}
+  <div class="session-info-card">
+    <div class="label">Charging Available Until</div>
+    <div class="value">{{ booking_end_display }}</div>
+  </div>
+  {% endif %}
+
+  {% if card_line %}
+  <div class="session-info-card">
+    <div class="label">Payment Method</div>
+    <div class="value">{{ card_line }}</div>
+  </div>
+  {% endif %}
+
+
+
+  <p class="note">
+    Pre-auth hold only. Final charge reflects actual energy used.
+  </p>
+</body>
+</html>

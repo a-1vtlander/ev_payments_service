@@ -198,6 +198,11 @@ async def test_integration_start_publishes_message(live_client: AsyncClient) -> 
     booking_response = json.dumps({
         "booking_id": "integ-test-booking",
         "initial_authorization_amount": 1.00,
+        "guest_name": "Test Guest",
+        "booking_is_active": "on",
+        "booking_start_time": "2026-03-01 12:00:00",
+        "booking_end_time": "2026-03-05 11:00:00",
+        "rate_per_kwh": 0.20,
     })
 
     # Simulate the charger controller: subscribe to the request topic, then
@@ -218,8 +223,8 @@ async def test_integration_start_publishes_message(live_client: AsyncClient) -> 
     assert resp.status_code == 200
     # Card form should reference the Square JS SDK URL.
     assert "square" in resp.text.lower()
-    # Booking ID from the response should appear on the page.
-    assert "integ-test-booking" in resp.text
+    # Guest first name should be prefilled in the name input.
+    assert 'value="Test"' in resp.text
 
 
 @pytest.mark.asyncio
@@ -266,6 +271,8 @@ async def test_integration_multiple_chargers(live_client: AsyncClient) -> None:
     booking_response = json.dumps({
         "booking_id": "integ-multi-booking",
         "initial_authorization_amount": 2.50,
+        "guest_name": "Multi Guest",
+        "booking_is_active": "on",
     })
 
     async def auto_reply() -> None:
@@ -282,7 +289,7 @@ async def test_integration_multiple_chargers(live_client: AsyncClient) -> None:
     await reply_task
 
     assert resp.status_code == 200
-    assert "integ-multi-booking" in resp.text
+    assert 'value="Multi"' in resp.text
     # The configured charger identity should appear in the request topic.
     assert expected_charger in request_topic
 

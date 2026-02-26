@@ -68,7 +68,7 @@ async def create_customer(booking_id: str, given_name: str, family_name: str) ->
         "idempotency_key": booking_id,   # stable per booking – safe to retry
         "given_name":      given_name,
         "family_name":     family_name,
-        "reference_id":    booking_id,
+        "reference_id":    booking_id[:40],
         "note":            f"EV charger session booking {booking_id}",
     }
     log.info(
@@ -111,7 +111,7 @@ async def create_card(
         "source_id":       source_id,
         "card": {
             "customer_id":  customer_id,
-            "reference_id": booking_id,
+            "reference_id": booking_id[:40],
         },
     }
     log.info(
@@ -174,7 +174,7 @@ async def create_payment_authorization(
             f"Pre-auth of ${amount_dollars:.2f}. "
             f"Final charge adjusted after session ends."
         ),
-        "reference_id": booking_id,
+        "reference_id": booking_id[:40],
     }
     log.info(
         "POST %s\nRequest body:\n%s",
