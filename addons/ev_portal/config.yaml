@@ -1,8 +1,12 @@
 name: "EV Charger Portal"
-description: "LAN-local HTTP portal for EV charger session requests via MQTT"
-version: "1.0.2"
+description: "Payment Manager AddOn for EV Sessions - Uses LAN-local HTTP server portal via MQTT with an HTTPS admin server"
+version: "1.0.3"
 slug: "ev_portal"
 init: false
+webui: http://[HOST]:[PORT:8090]/
+maintainer: 1VTLander
+url: "https://github.com/a-1vtlander/ev_payments_service"
+documentation: "https://github.com/a-1vtlander/ev_payments_service/blob/main/addons/ev_portal/README.md"
 
 arch:
   - aarch64
@@ -18,7 +22,7 @@ ports_description:
   8091/tcp: "EV Portal admin HTTPS interface"
 
 options:
-  mqtt_host: ""
+  mqtt_host: "core-mosquitto"
   mqtt_port: 1883
   mqtt_username: ""
   mqtt_password: ""
@@ -57,6 +61,6 @@ schema:
   admin_username: str
   admin_password: password
   admin_port_https: int
-  admin_tls_mode: str
+  admin_tls_mode: list(self_signed|provided)
   admin_tls_cert_path: str
   admin_tls_key_path: str

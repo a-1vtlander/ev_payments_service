@@ -19,10 +19,8 @@ log = logging.getLogger(__name__)
 
 # Fields that MUST be present and non-empty for the service to start.
 # mqtt_password is intentionally excluded: anonymous brokers leave it empty.
-_REQUIRED_FIELDS: list = [
-    "mqtt_host",
-    # square credentials are validated conditionally based on square_sandbox
-]
+_REQUIRED_FIELDS: list = []
+# mqtt_host is optional: if absent, MQTT features are disabled until configured
 
 _VALID_TLS_MODES = {"self_signed", "provided"}
 
@@ -60,12 +58,10 @@ def load_config() -> Dict[str, Any]:
         db.DB_PATH = raw_db_path
     log.info("DB path      : %s", db.DB_PATH)
 
-    # ── Validate required fields ───────────────────────────────────────────
-    missing = [k for k in _REQUIRED_FIELDS if not opts.get(k)]
-    if missing:
-        raise RuntimeError(
-            f"Missing required config field(s): {', '.join(missing)}.  "
-            "Update your add-on configuration in the HA UI (or dev_options.json locally)."
+    # ── Validate required fields (mqtt optional) ──────────────────────────
+    if not opts.get("mqtt_host"):
+        log.warning(
+            "mqtt_host not set in options; MQTT functionality will be disabled until configured."
         )
 
     # ── Coerce types with safe defaults ───────────────────────────────────
@@ -106,7 +102,7 @@ def load_config() -> Dict[str, Any]:
     )
     log.info(
         "MQTT broker        : %s:%s",
-        opts["mqtt_host"],
+        opts.get("mqtt_host") or "(not set)",
         mqtt_port,
     )
     log.info(
@@ -143,7 +139,7 @@ def load_config() -> Dict[str, Any]:
 
     return {
         "mqtt": {
-            "host":     opts["mqtt_host"].strip(),
+            "host":     (opts.get("mqtt_host") or "").strip(),
             "port":     mqtt_port,
             "username": (opts.get("mqtt_username") or "").strip(),
             "password": opts.get("mqtt_password") or "",

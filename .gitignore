@@ -10,6 +10,7 @@ __pycache__/
 *.egg-info/
 dist/
 build/
+.venv_install_test
 .eggs/
 
 # Virtual environments

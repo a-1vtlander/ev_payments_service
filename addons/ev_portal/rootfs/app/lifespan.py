@@ -20,14 +20,15 @@ log = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # -- Persistent store --------------------------------------------------
-    await db.init_db()
-
-    # -- Load & validate config --------------------------------------------
+    # -- Load & validate config first (sets db.DB_PATH before DB init) -----
     cfg = load_config()
     mqtt_cfg   = cfg["mqtt"]
     square_cfg = cfg["square"]
     app_cfg    = cfg["app"]
+    # config.py has already applied db.DB_PATH from options; now init the DB.
+
+    # -- Persistent store --------------------------------------------------
+    await db.init_db()
 
     # Admin config – also set here so that tests using LifespanManager don't
     # need to go through serve.py.
@@ -50,7 +51,7 @@ async def lifespan(app: FastAPI):
     log.info("Finalize session topic  : %s", state._finalize_session_topic)
 
     # ── Square config ──────────────────────────────────────────────────────
-    state._square_config = square_cfg
+    state._square_config = cfg["square"]
     log.info(
         "Square sandbox=%s  location_id=%r",
         state._square_config["sandbox"], state._square_config["location_id"],

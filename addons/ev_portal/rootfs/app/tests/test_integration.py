@@ -112,21 +112,39 @@ async def live_client(mosquitto_broker, tmp_path: Path, monkeypatch):
     OPTIONS_PATH is monkeypatched to a temp file pointing at the test broker.
     """
     import main as m
+    import state as s
 
+    db_file = tmp_path / "test_integration.db"
     options = {
-        "mqtt_host": BROKER_HOST,
-        "mqtt_port": BROKER_PORT,
-        "mqtt_username": "",
-        "mqtt_password": "",
+        "mqtt_host":                   BROKER_HOST,
+        "mqtt_port":                   BROKER_PORT,
+        "mqtt_username":               "",
+        "mqtt_password":               "",
+        "home_id":                     "test-home",
+        "charger_id":                  "test-charger",
+        "square_sandbox":              True,
+        "square_sandbox_app_id":       "sandbox-sq0idb-test",
+        "square_sandbox_access_token": "EAAAtest_integration_token",
+        "square_production_app_id":    "",
+        "square_production_access_token": "",
+        "square_location_id":          "LTEST00000000",
+        "square_charge_cents":         100,
+        "admin_enabled":               True,
+        "admin_username":              "admin",
+        "admin_password":              "test-password",
+        "admin_port_https":            18091,
+        "admin_tls_mode":              "self_signed",
+        "db_path":                     str(db_file),
     }
     options_file = tmp_path / "options.json"
     options_file.write_text(json.dumps(options))
-    monkeypatch.setattr(m, "OPTIONS_PATH", str(options_file))
+    # Patch state.OPTIONS_PATH so config.load_config() reads the temp file.
+    monkeypatch.setattr(s, "OPTIONS_PATH", str(options_file))
 
     async with LifespanManager(m.app) as manager:
         # paho connects in a background thread via loop_start(); poll is_connected().
         for _ in range(50):
-            if m.mqtt_client and m.mqtt_client.is_connected():
+            if s.mqtt_client and s.mqtt_client.is_connected():
                 break
             await asyncio.sleep(0.05)
         else:
@@ -169,23 +187,39 @@ async def test_integration_health(live_client: AsyncClient) -> None:
 @pytest.mark.asyncio
 async def test_integration_start_publishes_message(live_client: AsyncClient) -> None:
     """
-    End-to-end: HTTP GET /start → paho publish → Mosquitto → aiomqtt subscriber.
-    Asserts the full message flow, topic, and payload shape.
+    End-to-end: GET /start → paho booking request published → mock charger
+    controller replies with booking response → card form returned (HTTP 200).
     """
-    # Subscribe before making the request so we cannot miss the message.
-    collect_task = asyncio.create_task(_collect_one("ev/#"))
+    import state
+
+    request_topic  = state._booking_response_topic.replace("/response", "/request_session")
+    response_topic = state._booking_response_topic
+
+    booking_response = json.dumps({
+        "booking_id": "integ-test-booking",
+        "initial_authorization_amount": 1.00,
+    })
+
+    # Simulate the charger controller: subscribe to the request topic, then
+    # immediately publish a booking response when the request arrives.
+    async def auto_reply() -> None:
+        async with aiomqtt.Client(hostname=BROKER_HOST, port=BROKER_PORT) as pub:
+            await pub.subscribe(request_topic, qos=1)
+            async for _ in pub.messages:
+                await pub.publish(response_topic, booking_response, qos=1)
+                return
+
+    reply_task = asyncio.create_task(asyncio.wait_for(auto_reply(), timeout=10.0))
     await asyncio.sleep(0.15)  # give aiomqtt time to fully subscribe
 
-    resp = await live_client.get("/start?charger_id=integration-charger")
+    resp = await live_client.get("/start")
+    await reply_task
+
     assert resp.status_code == 200
-    assert "integration-charger" in resp.text
-
-    msg = await collect_task
-
-    assert str(msg.topic) == "ev/integration-charger/start"
-    payload = json.loads(msg.payload)
-    assert payload["charger_id"] == "integration-charger"
-    assert "timestamp" in payload
+    # Card form should reference the Square JS SDK URL.
+    assert "square" in resp.text.lower()
+    # Booking ID from the response should appear on the page.
+    assert "integ-test-booking" in resp.text
 
 
 @pytest.mark.asyncio
@@ -219,29 +253,36 @@ async def test_integration_payload_timestamp_is_iso8601_utc(
 
 @pytest.mark.asyncio
 async def test_integration_multiple_chargers(live_client: AsyncClient) -> None:
-    """Each charger ID must produce a message on its own dedicated topic."""
-    charger_ids = ["charger-A", "charger-B", "charger-C"]
-    collected: list[aiomqtt.Message] = []
+    """
+    Full booking round-trip: verifies the request topic matches the configured
+    charger identity and the card form includes the booking ID from the response.
+    """
+    import state
 
-    async def collect_n(n: int) -> None:
-        async def _inner() -> None:
-            async with aiomqtt.Client(hostname=BROKER_HOST, port=BROKER_PORT) as sub:
-                await sub.subscribe("ev/#", qos=1)
-                async for msg in sub.messages:
-                    collected.append(msg)
-                    if len(collected) == n:
-                        return
+    request_topic  = state._booking_response_topic.replace("/response", "/request_session")
+    response_topic = state._booking_response_topic
+    expected_charger = state._app_config.get("charger_id", "")
 
-        await asyncio.wait_for(_inner(), timeout=5.0)
+    booking_response = json.dumps({
+        "booking_id": "integ-multi-booking",
+        "initial_authorization_amount": 2.50,
+    })
 
-    collect_task = asyncio.create_task(collect_n(len(charger_ids)))
+    async def auto_reply() -> None:
+        async with aiomqtt.Client(hostname=BROKER_HOST, port=BROKER_PORT) as pub:
+            await pub.subscribe(request_topic, qos=1)
+            async for _ in pub.messages:
+                await pub.publish(response_topic, booking_response, qos=1)
+                return
+
+    reply_task = asyncio.create_task(asyncio.wait_for(auto_reply(), timeout=10.0))
     await asyncio.sleep(0.15)
 
-    for cid in charger_ids:
-        resp = await live_client.get(f"/start?charger_id={cid}")
-        assert resp.status_code == 200
+    resp = await live_client.get("/start")
+    await reply_task
 
-    await collect_task
+    assert resp.status_code == 200
+    assert "integ-multi-booking" in resp.text
+    # The configured charger identity should appear in the request topic.
+    assert expected_charger in request_topic
 
-    topics = {str(m.topic) for m in collected}
-    assert topics == {f"ev/{cid}/start" for cid in charger_ids}

@@ -48,6 +48,13 @@ def render_card_form(
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>EV Charging Payment</title>
   <script type="text/javascript" src="{js_url}"></script>
+  <script>
+    // Polyfill: some environments may reference a `browser` global (extensions).
+    // Ensure it exists to avoid "ReferenceError: browser is not defined" in the page.
+    if (typeof browser === 'undefined') {{
+      window.browser = window.browser || {{}};
+    }}
+  </script>
   <style>
     * {{ box-sizing: border-box; }}
     body {{ font-family: sans-serif; max-width: 480px; margin: 50px auto;

@@ -21,10 +21,15 @@ so the sandbox account stays tidy.
 from __future__ import annotations
 
 import json
+import uuid
 from pathlib import Path
 
 import pytest
 import pytest_asyncio
+
+# Unique 8-char suffix per test session. Square's sandbox rejects reuse of an
+# idempotency key with different parameters, so keys must be unique each run.
+_RUN_ID = uuid.uuid4().hex[:8]
 
 import square
 import state
@@ -69,7 +74,7 @@ async def sandbox_square_config():
 
 async def _create_test_customer(suffix: str = "1") -> str:
     cid = await square.create_customer(
-        booking_id=f"sandbox-test-{suffix}",
+        booking_id=f"sandbox-test-{suffix}-{_RUN_ID}",
         given_name="Sandbox",
         family_name="Tester",
     )
@@ -106,7 +111,7 @@ async def test_create_card_returns_ids_and_meta():
     """
     card_id, customer_id, card_meta = await square.create_card(
         source_id="cnon:card-nonce-ok",
-        booking_id="sandbox-card-test",
+        booking_id=f"sandbox-card-test-{_RUN_ID}",
         given_name="Sandbox",
         family_name="Tester",
     )
@@ -124,14 +129,14 @@ async def test_create_card_returns_ids_and_meta():
 async def test_create_payment_authorization_returns_pending_payment():
     card_id, customer_id, _ = await square.create_card(
         source_id="cnon:card-nonce-ok",
-        booking_id="sandbox-preauth-test",
+        booking_id=f"sandbox-preauth-test-{_RUN_ID}",
         given_name="Sandbox",
         family_name="Auth",
     )
     payment = await square.create_payment_authorization(
         card_id=card_id,
         customer_id=customer_id,
-        booking_id="sandbox-preauth-test",
+        booking_id=f"sandbox-preauth-test-{_RUN_ID}",
         amount_cents=100,
     )
     assert isinstance(payment, dict)
@@ -147,14 +152,14 @@ async def test_payment_authorization_is_not_auto_completed():
     """autocomplete must be False for pre-auth flows."""
     card_id, customer_id, _ = await square.create_card(
         source_id="cnon:card-nonce-ok",
-        booking_id="sandbox-no-autocomplete",
+        booking_id=f"sandbox-no-autocomplete-{_RUN_ID}",
         given_name="Sandbox",
         family_name="NoComplete",
     )
     payment = await square.create_payment_authorization(
         card_id=card_id,
         customer_id=customer_id,
-        booking_id="sandbox-no-autocomplete",
+        booking_id=f"sandbox-no-autocomplete-{_RUN_ID}",
         amount_cents=50,
     )
     assert payment.get("status") != "COMPLETED"
@@ -168,14 +173,14 @@ async def test_payment_authorization_is_not_auto_completed():
 async def test_cancel_payment_voids_preauth():
     card_id, customer_id, _ = await square.create_card(
         source_id="cnon:card-nonce-ok",
-        booking_id="sandbox-cancel-test",
+        booking_id=f"sandbox-cancel-test-{_RUN_ID}",
         given_name="Sandbox",
         family_name="Cancel",
     )
     payment = await square.create_payment_authorization(
         card_id=card_id,
         customer_id=customer_id,
-        booking_id="sandbox-cancel-test",
+        booking_id=f"sandbox-cancel-test-{_RUN_ID}",
         amount_cents=100,
     )
     result = await square.cancel_payment(payment["id"])
@@ -193,14 +198,14 @@ async def test_capture_payment_at_lower_amount():
     """
     card_id, customer_id, _ = await square.create_card(
         source_id="cnon:card-nonce-ok",
-        booking_id="sandbox-capture-test",
+        booking_id=f"sandbox-capture-test-{_RUN_ID}",
         given_name="Sandbox",
         family_name="Capture",
     )
     payment = await square.create_payment_authorization(
         card_id=card_id,
         customer_id=customer_id,
-        booking_id="sandbox-capture-test",
+        booking_id=f"sandbox-capture-test-{_RUN_ID}",
         amount_cents=500,
     )
     captured = await square.capture_payment(
@@ -214,14 +219,14 @@ async def test_capture_payment_at_lower_amount():
 async def test_capture_payment_at_full_amount():
     card_id, customer_id, _ = await square.create_card(
         source_id="cnon:card-nonce-ok",
-        booking_id="sandbox-capture-full",
+        booking_id=f"sandbox-capture-full-{_RUN_ID}",
         given_name="Sandbox",
         family_name="FullCapture",
     )
     payment = await square.create_payment_authorization(
         card_id=card_id,
         customer_id=customer_id,
-        booking_id="sandbox-capture-full",
+        booking_id=f"sandbox-capture-full-{_RUN_ID}",
         amount_cents=300,
     )
     captured = await square.capture_payment(

@@ -24,6 +24,7 @@ from fastapi import FastAPI
 from fastapi.responses import RedirectResponse
 
 from lifespan import lifespan
+import state
 from endpoints import debug, health, index, session, start, submit_payment
 
 logging.basicConfig(
