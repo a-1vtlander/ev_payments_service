@@ -40,6 +40,7 @@ import db
 import square
 import state
 from tests.conftest import (
+    AUTHORIZE_REQUEST_TOPIC,
     AUTHORIZE_RESPONSE_TOPIC,
     BOOKING_RESPONSE_TOPIC,
     BROKER_HOST,
@@ -171,12 +172,19 @@ async def test_e2e_submit_payment_success(live_client: AsyncClient) -> None:
         if v["booking_id"] == booking_id
     )
 
-    # Step 2: Simulate HA authorizing after the app publishes to authorize topic
-    async def push_authorize_response():
-        await asyncio.sleep(0.5)
-        await _mqtt_publish(AUTHORIZE_RESPONSE_TOPIC, {"success": True})
+    # Step 2: Watch for the authorize_session publish from the app, then respond.
+    # Using a reactive approach (subscribe then reply) avoids fixed-delay race conditions
+    # when Square sandbox calls are slow.
+    async def reactive_authorize_response():
+        async with aiomqtt.Client(hostname=BROKER_HOST, port=BROKER_PORT) as sub:
+            await sub.subscribe(AUTHORIZE_REQUEST_TOPIC, qos=1)
+            async for _msg in sub.messages:
+                # App published authorize_session — reply immediately
+                await _mqtt_publish(AUTHORIZE_RESPONSE_TOPIC, {"success": True})
+                return
 
-    asyncio.create_task(push_authorize_response())
+    asyncio.create_task(reactive_authorize_response())
+    await asyncio.sleep(0.15)  # give aiomqtt time to subscribe before we POST
 
     pay_resp = await live_client.post("/submit_payment", data={
         "source_id":   "cnon:card-nonce-ok",
