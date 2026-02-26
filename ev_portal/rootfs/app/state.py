@@ -40,9 +40,12 @@ _app_config: dict = {}
 _booking_response_topic: str = ""        # booking/response
 _authorize_request_topic: str = ""       # booking/authorize_session  (publish)
 _authorize_response_topic: str = ""      # booking/authorize_session/response  (subscribe)
+_finalize_session_topic: str = ""        # booking/finalize_session  (subscribe)
 
 # Square credentials and settings.
 _square_config: dict = {}
 
-# session_uid -> {booking_id, payment_token}  – one-time tokens for post-process validation.
+# session_uid -> {booking_id, amount_cents}  – one-time tokens issued by /start.
 _pending_sessions: dict[str, dict] = {}
+
+# Square object state is now persisted to SQLite via db.py.

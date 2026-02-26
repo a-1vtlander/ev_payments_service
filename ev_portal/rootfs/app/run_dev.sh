@@ -20,6 +20,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 export EV_OPTIONS_PATH="${EV_OPTIONS_PATH:-${SCRIPT_DIR}/tests/dev_options.json}"
+export EV_DB_PATH="${EV_DB_PATH:-${SCRIPT_DIR}/tests/ev_portal.db}"
 
 if [[ ! -f "$EV_OPTIONS_PATH" ]]; then
     echo "ERROR: options file not found: $EV_OPTIONS_PATH" >&2
@@ -29,6 +30,7 @@ fi
 echo "-------------------------------------------------------"
 echo "  EV Charger Portal – dev server"
 echo "  Options : $EV_OPTIONS_PATH"
+echo "  DB      : $EV_DB_PATH"
 echo "  URL     : http://localhost:8080"
 echo "  Health  : http://localhost:8080/health"
 echo "  Start   : http://localhost:8080/start?charger_id=test"

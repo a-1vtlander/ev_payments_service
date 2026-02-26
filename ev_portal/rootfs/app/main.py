@@ -18,7 +18,7 @@ import logging
 from fastapi import FastAPI
 
 from lifespan import lifespan
-from endpoints import debug, health, index, payment_post_process, start
+from endpoints import debug, health, index, session, start, submit_payment
 
 logging.basicConfig(
     level=logging.INFO,
@@ -31,4 +31,5 @@ app.include_router(index.router)
 app.include_router(health.router)
 app.include_router(debug.router)
 app.include_router(start.router)
-app.include_router(payment_post_process.router)
+app.include_router(submit_payment.router)
+app.include_router(session.router)

@@ -2,3 +2,8 @@
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 testpaths = ["tests"]
+
+markers = [
+    "sandbox: tests that call the real Square sandbox API (requires network + valid token)",
+    "e2e: full end-to-end tests (requires mosquitto on PATH + Square sandbox access)",
+]

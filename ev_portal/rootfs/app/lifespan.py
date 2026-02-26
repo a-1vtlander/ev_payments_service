@@ -10,7 +10,9 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
+import db
 import state
+from finalize import finalize_session_consumer
 from mqtt import build_mqtt_client
 from square import fetch_first_location_id
 
@@ -28,7 +30,10 @@ def load_options() -> dict:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # ── Load config ────────────────────────────────────────────────────────
+    # -- Persistent store --------------------------------------------------
+    await db.init_db()
+
+    # -- Load config -------------------------------------------------------
     opts = load_options()
 
     host = (opts.get("mqtt_host") or "localhost").strip()
@@ -48,11 +53,13 @@ async def lifespan(app: FastAPI):
     state._booking_response_topic   = f"{base_topic}/response"
     state._authorize_request_topic  = f"{base_topic}/authorize_session"
     state._authorize_response_topic = f"{base_topic}/authorize_session/response"
+    state._finalize_session_topic   = f"{base_topic}/finalize_session"
 
     log.info("Booking request topic  : %s/request_session", base_topic)
     log.info("Booking response topic : %s", state._booking_response_topic)
     log.info("Authorize request topic: %s", state._authorize_request_topic)
     log.info("Authorize response topic: %s", state._authorize_response_topic)
+    log.info("Finalize session topic : %s", state._finalize_session_topic)
 
     # ── Square config ──────────────────────────────────────────────────────
     state._square_config = {
@@ -82,6 +89,7 @@ async def lifespan(app: FastAPI):
     state._topic_queues = {
         state._booking_response_topic:   asyncio.Queue(),
         state._authorize_response_topic: asyncio.Queue(),
+        state._finalize_session_topic:   asyncio.Queue(),
     }
     subscribed_topics = list(state._topic_queues.keys())
 
@@ -94,9 +102,16 @@ async def lifespan(app: FastAPI):
     except Exception as exc:
         log.error("Could not initiate MQTT connection: %s", exc)
 
+    # ── Background tasks ───────────────────────────────────────────────────
+    _finalize_task = asyncio.create_task(finalize_session_consumer())
+
     yield
 
     # ── Shutdown ───────────────────────────────────────────────────────────
+    _finalize_task.cancel()
+    await asyncio.gather(_finalize_task, return_exceptions=True)
+    log.info("finalize_session_consumer stopped")
+
     if state.mqtt_client:
         state.mqtt_client.loop_stop()
         state.mqtt_client.disconnect()

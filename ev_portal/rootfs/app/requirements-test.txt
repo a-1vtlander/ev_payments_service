@@ -6,6 +6,7 @@
 pytest==8.3.5
 pytest-asyncio==0.25.3
 httpx==0.28.1
+respx==0.22.0
 
 # Integration-test extras (async MQTT subscriber + lifespan trigger)
 # NOTE: integration tests require `mosquitto` on PATH.

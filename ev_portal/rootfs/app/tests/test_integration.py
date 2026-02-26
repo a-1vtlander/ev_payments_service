@@ -1,6 +1,11 @@
 """
-Integration tests – real Mosquitto broker (subprocess), real FastAPI lifespan,
-real paho publish, aiomqtt subscriber.
+Integration tests have been superseded by tests/test_e2e.py.
+
+End-to-end tests (real Mosquitto + real Square sandbox) now live in:
+    tests/test_e2e.py          -- run with: pytest -m e2e
+    tests/test_square_sandbox.py -- run with: pytest -m sandbox
+"""
+
 
 Stack
 -----

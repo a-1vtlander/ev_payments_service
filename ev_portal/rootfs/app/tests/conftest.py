@@ -1,21 +1,31 @@
 """
 Shared pytest fixtures for the EV Charger Portal test suite.
 
-Design note
------------
-`httpx.ASGITransport` sends only `http`-scoped ASGI events, so FastAPI's lifespan
-(which would try to open a real MQTT connection) never fires during unit tests.
-Instead, each test fixture sets module-level state directly:
-  - main.mqtt_client       → MagicMock paho client
-  - main._response_queue   → real asyncio.Queue (pre-populated by tests as needed)
-  - main._session_lock     → real asyncio.Lock
-  - main._app_config       → dict with home_id / charger_id
-  - main._response_topic   → string
+Architecture
+------------
+All runtime globals live in ``state.py``, not on ``main.py``.
+Unit/mock tests never trigger the FastAPI lifespan; instead they inject state
+directly and use ``ASGITransport`` (which skips lifespan).
+
+Integration/e2e tests use ``asgi-lifespan.LifespanManager`` with the real
+lifespan but with options.json monkeypatched to point at a local broker.
+
+Marker convention
+-----------------
+  (none)        pure unit/mock tests  – always run
+  @sandbox      real Square sandbox API calls; network required
+  @e2e          real mosquitto + real Square sandbox; mosquitto on PATH required
 """
 
 from __future__ import annotations
 
 import asyncio
+import json
+import shutil
+import socket
+import subprocess
+import time
+from pathlib import Path
 from unittest.mock import MagicMock
 
 import paho.mqtt.client as mqtt
@@ -23,115 +33,277 @@ import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 
-DEFAULT_HOME_ID = "test-home"
-DEFAULT_CHARGER_ID = "test-charger"
-DEFAULT_RESPONSE_TOPIC = f"ev/charger/{DEFAULT_HOME_ID}/{DEFAULT_CHARGER_ID}/booking/response"
+import db
+import state
+
+# ---------------------------------------------------------------------------
+# Stable test identities
+# ---------------------------------------------------------------------------
+
+TEST_HOME_ID    = "test-home"
+TEST_CHARGER_ID = "test-charger"
+TEST_BOOKING_ID = "test-booking-42"
+TEST_SESSION_ID = "aaaa0000-bbbb-cccc-dddd-eeeeeeeeeeee"
+
+BOOKING_RESPONSE_TOPIC   = f"ev/charger/{TEST_HOME_ID}/{TEST_CHARGER_ID}/booking/response"
+AUTHORIZE_REQUEST_TOPIC  = f"ev/charger/{TEST_HOME_ID}/{TEST_CHARGER_ID}/booking/authorize_session"
+AUTHORIZE_RESPONSE_TOPIC = f"ev/charger/{TEST_HOME_ID}/{TEST_CHARGER_ID}/booking/authorize_session/response"
+FINALIZE_TOPIC           = f"ev/charger/{TEST_HOME_ID}/{TEST_CHARGER_ID}/booking/finalize_session"
+
+# Real sandbox credentials (sandbox env) – read by sandbox / e2e tests only.
+SANDBOX_APP_ID    = "sandbox-sq0idb-d3YNYX4Uu3FOuC5nuWK1KA"
+SANDBOX_TOKEN     = "EAAAlwAYpAv5_iEXxRYaU5wUCaQLBhGq8MzvUU20QNACgjk2I0jAfJ00hip2dt-f"
+
+# ---------------------------------------------------------------------------
+# DB fixtures
+# ---------------------------------------------------------------------------
+
+@pytest_asyncio.fixture
+async def tmp_db(tmp_path: Path):
+    """Fresh SQLite DB in a temp directory; restores db.DB_PATH afterwards."""
+    db_file = str(tmp_path / "test_ev_portal.db")
+    original = db.DB_PATH
+    db.DB_PATH = db_file
+    await db.init_db()
+    yield db_file
+    db.DB_PATH = original
 
 
 # ---------------------------------------------------------------------------
-# Reusable MQTT mock
+# MQTT mock fixtures
 # ---------------------------------------------------------------------------
 
 @pytest.fixture
-def connected_mqtt() -> MagicMock:
-    """A mock paho Client that reports itself as connected and publishes successfully."""
-    mock = MagicMock(spec=mqtt.Client)
-    mock.is_connected.return_value = True
-    mock.publish.return_value = MagicMock(rc=mqtt.MQTT_ERR_SUCCESS, mid=42)
-    return mock
+def mock_mqtt() -> MagicMock:
+    """A mock paho Client that reports connected and publishes successfully."""
+    m = MagicMock(spec=mqtt.Client)
+    m.is_connected.return_value = True
+    m.publish.return_value = MagicMock(rc=mqtt.MQTT_ERR_SUCCESS, mid=42)
+    return m
 
 
 @pytest.fixture
 def disconnected_mqtt() -> MagicMock:
-    """A mock paho Client that reports itself as *not* connected."""
-    mock = MagicMock(spec=mqtt.Client)
-    mock.is_connected.return_value = False
-    return mock
+    m = MagicMock(spec=mqtt.Client)
+    m.is_connected.return_value = False
+    return m
 
 
 # ---------------------------------------------------------------------------
-# App fixture helpers
+# State injection
 # ---------------------------------------------------------------------------
 
-def _inject_module_state(m, mqtt_mock: MagicMock, response_payload: str | None = None):
-    """
-    Inject all module-level state that lifespan normally sets up.
-    Returns a dict of (attr, old_value) for teardown.
-    """
-    queue: asyncio.Queue = asyncio.Queue()
-    if response_payload is not None:
-        queue.put_nowait(response_payload)
+class _StateSnapshot:
+    """Save/restore all mutable state.* globals."""
+    _ATTRS = (
+        "mqtt_client", "_topic_queues", "_session_lock", "_app_config",
+        "_square_config", "_booking_response_topic", "_authorize_request_topic",
+        "_authorize_response_topic", "_finalize_session_topic",
+        "_pending_sessions", "_event_loop",
+    )
 
-    saved = {
-        "mqtt_client": m.mqtt_client,
-        "_response_queue": m._response_queue,
-        "_session_lock": m._session_lock,
-        "_app_config": m._app_config,
-        "_response_topic": m._response_topic,
+    def __init__(self) -> None:
+        self._saved = {a: getattr(state, a) for a in self._ATTRS}
+
+    def restore(self) -> None:
+        for attr, val in self._saved.items():
+            setattr(state, attr, val)
+
+
+def _build_queues() -> dict:
+    return {
+        BOOKING_RESPONSE_TOPIC:   asyncio.Queue(),
+        AUTHORIZE_RESPONSE_TOPIC: asyncio.Queue(),
+        FINALIZE_TOPIC:           asyncio.Queue(),
     }
-    m.mqtt_client = mqtt_mock
-    m._response_queue = queue
-    m._session_lock = asyncio.Lock()
-    m._app_config = {"home_id": DEFAULT_HOME_ID, "charger_id": DEFAULT_CHARGER_ID}
-    m._response_topic = DEFAULT_RESPONSE_TOPIC
-    return saved
 
 
-def _restore_module_state(m, saved: dict):
-    for attr, val in saved.items():
-        setattr(m, attr, val)
+def _test_square_config(*, location_id: str = "LTEST00000000") -> dict:
+    return {
+        "sandbox":      True,
+        "app_id":       SANDBOX_APP_ID,
+        "access_token": SANDBOX_TOKEN,
+        "location_id":  location_id,
+        "charge_cents": 100,
+    }
+
+
+@pytest_asyncio.fixture
+async def patched_state(mock_mqtt: MagicMock, tmp_db: str):
+    """Inject all state globals for unit tests; restore on teardown."""
+    snap = _StateSnapshot()
+
+    state.mqtt_client               = mock_mqtt
+    state._topic_queues             = _build_queues()
+    state._session_lock             = asyncio.Lock()
+    state._app_config               = {"home_id": TEST_HOME_ID, "charger_id": TEST_CHARGER_ID}
+    state._square_config            = _test_square_config()
+    state._booking_response_topic   = BOOKING_RESPONSE_TOPIC
+    state._authorize_request_topic  = AUTHORIZE_REQUEST_TOPIC
+    state._authorize_response_topic = AUTHORIZE_RESPONSE_TOPIC
+    state._finalize_session_topic   = FINALIZE_TOPIC
+    state._pending_sessions         = {}
+    state._event_loop               = asyncio.get_running_loop()
+
+    yield
+
+    snap.restore()
 
 
 # ---------------------------------------------------------------------------
-# App fixtures
+# HTTP client fixtures (no lifespan)
 # ---------------------------------------------------------------------------
 
 @pytest_asyncio.fixture
-async def client(connected_mqtt: MagicMock) -> AsyncClient:
+async def unit_client(patched_state) -> AsyncClient:
     """
-    AsyncClient with a connected MQTT mock and a pre-populated response queue
-    containing a generic JSON response, so /start resolves immediately.
+    AsyncClient backed by ASGITransport (lifespan NOT triggered).
+    State is injected by patched_state.
     """
     import main as m
+    async with AsyncClient(transport=ASGITransport(app=m.app), base_url="http://test") as c:
+        yield c
 
-    saved = _inject_module_state(
-        m, connected_mqtt,
-        response_payload='{"status": "ok", "session_id": "test-session-1"}',
+
+@pytest_asyncio.fixture
+async def unit_client_no_mqtt(disconnected_mqtt: MagicMock, tmp_db: str) -> AsyncClient:
+    """AsyncClient with a disconnected MQTT mock."""
+    snap = _StateSnapshot()
+    state.mqtt_client               = disconnected_mqtt
+    state._topic_queues             = _build_queues()
+    state._session_lock             = asyncio.Lock()
+    state._app_config               = {"home_id": TEST_HOME_ID, "charger_id": TEST_CHARGER_ID}
+    state._square_config            = _test_square_config()
+    state._booking_response_topic   = BOOKING_RESPONSE_TOPIC
+    state._authorize_request_topic  = AUTHORIZE_REQUEST_TOPIC
+    state._authorize_response_topic = AUTHORIZE_RESPONSE_TOPIC
+    state._finalize_session_topic   = FINALIZE_TOPIC
+    state._pending_sessions         = {}
+    state._event_loop               = asyncio.get_running_loop()
+
+    import main as m
+    try:
+        async with AsyncClient(transport=ASGITransport(app=m.app), base_url="http://test") as c:
+            yield c
+    finally:
+        snap.restore()
+
+
+# ---------------------------------------------------------------------------
+# Helpers used by unit tests
+# ---------------------------------------------------------------------------
+
+def make_booking_response(
+    booking_id: str = TEST_BOOKING_ID,
+    amount_dollars: float = 1.00,
+) -> str:
+    return json.dumps({
+        "booking_id": booking_id,
+        "initial_authorization_amount": amount_dollars,
+    })
+
+
+def make_authorize_response(success: bool = True) -> str:
+    return json.dumps({"success": success})
+
+
+async def push_after(queue: asyncio.Queue, payload: str, delay: float = 0.05) -> None:
+    """Push a payload into a queue after a short delay (used from test tasks)."""
+    await asyncio.sleep(delay)
+    queue.put_nowait(payload)
+
+
+# ---------------------------------------------------------------------------
+# Local Mosquitto broker (used by e2e tests)
+# ---------------------------------------------------------------------------
+
+BROKER_HOST = "127.0.0.1"
+BROKER_PORT = 18832
+
+
+def _mosquitto_bin() -> str:
+    path = shutil.which("mosquitto")
+    if not path:
+        pytest.skip(
+            "mosquitto not found on PATH — install it to run e2e tests "
+            "(macOS: brew install mosquitto; Debian: apt-get install mosquitto)"
+        )
+    return path  # type: ignore[return-value]
+
+
+def _wait_for_port(host: str, port: int, timeout: float = 5.0) -> None:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        try:
+            with socket.create_connection((host, port), timeout=0.2):
+                return
+        except OSError:
+            time.sleep(0.05)
+    raise RuntimeError(f"Port {host}:{port} did not open within {timeout}s")
+
+
+@pytest_asyncio.fixture
+async def mosquitto_broker(tmp_path: Path):
+    """Start a local anonymous mosquitto broker and yield; terminate on teardown."""
+    config_file = tmp_path / "mosquitto.conf"
+    config_file.write_text(
+        f"listener {BROKER_PORT} {BROKER_HOST}\n"
+        "allow_anonymous true\n"
+        "log_type none\n"
+    )
+    proc = subprocess.Popen(
+        [_mosquitto_bin(), "-c", str(config_file)],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
     )
     try:
-        async with AsyncClient(transport=ASGITransport(app=m.app), base_url="http://test") as c:
-            yield c
+        _wait_for_port(BROKER_HOST, BROKER_PORT)
+        yield proc
     finally:
-        _restore_module_state(m, saved)
+        proc.terminate()
+        try:
+            proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            proc.kill()
 
 
 @pytest_asyncio.fixture
-async def client_no_response(connected_mqtt: MagicMock) -> AsyncClient:
+async def live_client(mosquitto_broker, tmp_path: Path, monkeypatch, tmp_db: str):
     """
-    AsyncClient with a connected MQTT mock but an empty response queue.
-    Use to test timeout behaviour (override RESPONSE_TIMEOUT to a tiny value).
-    """
-    import main as m
-
-    saved = _inject_module_state(m, connected_mqtt, response_payload=None)
-    try:
-        async with AsyncClient(transport=ASGITransport(app=m.app), base_url="http://test") as c:
-            yield c
-    finally:
-        _restore_module_state(m, saved)
-
-
-@pytest_asyncio.fixture
-async def client_no_mqtt(disconnected_mqtt: MagicMock) -> AsyncClient:
-    """
-    AsyncClient with a *disconnected* MQTT mock.
-    Use to assert degraded-state behaviour.
+    FastAPI app with its full lifespan (real MQTT, real Square sandbox).
+    OPTIONS_PATH is monkeypatched to a temp file pointing at the test broker.
+    square_sandbox is forced True regardless of config.yaml.
     """
     import main as m
 
-    saved = _inject_module_state(m, disconnected_mqtt, response_payload=None)
-    try:
-        async with AsyncClient(transport=ASGITransport(app=m.app), base_url="http://test") as c:
+    options = {
+        "mqtt_host":            BROKER_HOST,
+        "mqtt_port":            BROKER_PORT,
+        "mqtt_username":        "",
+        "mqtt_password":        "",
+        "home_id":              TEST_HOME_ID,
+        "charger_id":           TEST_CHARGER_ID,
+        "square_sandbox":       True,          # always sandbox
+        "square_app_id":        SANDBOX_APP_ID,
+        "square_access_token":  SANDBOX_TOKEN,
+        "square_location_id":   "",            # auto-fetched from Square
+        "square_charge_cents":  100,
+    }
+    options_file = tmp_path / "options.json"
+    options_file.write_text(json.dumps(options))
+    monkeypatch.setattr(state, "OPTIONS_PATH", str(options_file))
+
+    from asgi_lifespan import LifespanManager
+    async with LifespanManager(m.app) as manager:
+        for _ in range(50):
+            if state.mqtt_client and state.mqtt_client.is_connected():
+                break
+            await asyncio.sleep(0.05)
+        else:
+            pytest.fail("paho MQTT did not connect within 2.5s")
+
+        async with AsyncClient(
+            transport=ASGITransport(app=manager.app),
+            base_url="http://test",
+        ) as c:
             yield c
-    finally:
-        _restore_module_state(m, saved)

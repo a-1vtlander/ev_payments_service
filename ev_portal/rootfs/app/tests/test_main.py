@@ -1,9 +1,11 @@
 """
-Unit tests for ev_portal/rootfs/app/main.py
+Tests for main.py have been superseded by tests/test_unit.py.
 
-Run with:
-    EV_OPTIONS_PATH=tests/options.example.json pytest -v tests/
+All endpoint unit tests (health, start, submit_payment, session, db viewer)
+now live in test_unit.py which is aligned with the current state.py-based
+architecture.
 """
+
 
 from __future__ import annotations
 

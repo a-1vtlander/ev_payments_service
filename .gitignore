@@ -2,6 +2,8 @@
 __pycache__/
 *.py[cod]
 *.pyo
+*.db-wal
+*.db-shm
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
@@ -23,6 +25,9 @@ coverage.xml
 # Secrets / local overrides
 # (dev_options.json contains real creds – keep out of git)
 ev_portal/rootfs/app/tests/dev_options.json
+
+# Local dev SQLite database
+ev_portal/rootfs/app/tests/ev_portal.db
 
 # VS Code
 .vscode/
