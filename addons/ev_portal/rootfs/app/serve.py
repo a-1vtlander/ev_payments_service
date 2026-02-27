@@ -1,16 +1,14 @@
 """
-serve.py – Launch guest (HTTPS:8090) and admin (HTTPS:8091) uvicorn servers.
+serve.py – Launch guest (HTTP:8090) and admin (HTTPS:8091) uvicorn servers.
 
 This is the production and local-dev entry point:
   python serve.py
 
-The guest FastAPI app (main:app) runs on HTTPS port 8090.  TLS uses a
-self-signed cert so browsers grant a secure context (required by Square's
-Web Payments SDK).  In production, Cloudflare Tunnel sits in front and
-presents its own valid certificate to end users — the tunnel connects to
-the origin over HTTPS but accepts self-signed certs.  The admin FastAPI
-app (admin.app:admin_app) runs on HTTPS port 8091, protected by
-session-cookie / Basic Auth.
+The guest FastAPI app (main:app) runs on plain HTTP port 8090.  In
+production, Cloudflare Tunnel sits in front and presents valid HTTPS to
+browsers — the browser sees HTTPS so Square's Web Payments SDK gets the
+secure context it requires.  The admin FastAPI app (admin.app:admin_app)
+runs on HTTPS port 8091, protected by session-cookie / Basic Auth.
 
 Both servers share runtime state via state.py; the guest app's lifespan
 initialises MQTT, Square, and the DB.
@@ -24,7 +22,7 @@ import uvicorn
 
 import state
 from config import load_config
-from tls import ensure_cert, ensure_guest_cert
+from tls import ensure_cert
 
 logging.basicConfig(
     level=logging.INFO,
@@ -44,21 +42,11 @@ async def _serve_all() -> None:
 
     admin_cfg = cfg["admin"]
 
-    # ── Guest server (HTTPS – self-signed cert; secure context for Square SDK) ──
-    # Cloudflare Tunnel connects to this HTTPS origin and presents its own
-    # valid TLS cert to browsers, so end users never see the self-signed cert.
-    try:
-        guest_cert_path, guest_key_path = ensure_guest_cert()
-    except Exception as exc:
-        log.critical("TLS setup failed for guest server – cannot start: %s", exc)
-        raise
-
+    # ── Guest server (plain HTTP – Cloudflare terminates TLS at the edge) ─────
     guest_config = uvicorn.Config(
         "main:app",
         host="0.0.0.0",
         port=GUEST_PORT,
-        ssl_certfile=guest_cert_path,
-        ssl_keyfile=guest_key_path,
         log_level="info",
         access_log=True,
     )
@@ -90,7 +78,7 @@ async def _serve_all() -> None:
     else:
         log.info("Admin interface disabled (admin_enabled=false)")
 
-    log.info("Guest server starting on https://0.0.0.0:%s  (self-signed TLS; Cloudflare terminates for browsers)", GUEST_PORT)
+    log.info("Guest server starting on http://0.0.0.0:%s  (plain HTTP; Cloudflare provides HTTPS at edge)", GUEST_PORT)
 
     await asyncio.gather(*[s.serve() for s in servers])
 
