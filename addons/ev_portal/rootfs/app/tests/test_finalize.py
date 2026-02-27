@@ -7,8 +7,9 @@ Square API calls and DB writes are mocked.  Tests exercise:
   - Session not found
   - Already CAPTURED / VOIDED guards
   - Missing square_payment_id
-  - Happy-path capture (amount > 0)
+  - Happy-path capture (amount > 0, amount <= authorized)
   - Happy-path void (amount == 0)
+  - Overcharge path (final > authorized): void pre-auth then direct charge
   - Retry logic (fail N-1 times then succeed)
   - Exhausted retries → mark_failed
 """
@@ -281,3 +282,159 @@ async def test_void_all_retries_exhausted_calls_mark_failed(tmp_db) -> None:
         mock_failed.assert_called_once()
         mock_voided.assert_not_called()
         assert "void failed" in mock_failed.call_args.args[1]
+
+
+# ---------------------------------------------------------------------------
+# Overcharge path – final_amount_cents > authorized_amount_cents
+# ---------------------------------------------------------------------------
+
+_BASE_ROW_WITH_CARD = {
+    **_BASE_ROW,
+    "authorized_amount_cents": 500,
+    "square_card_id":          "card_abc",
+    "square_customer_id":      "cust_xyz",
+}
+
+
+async def test_overcharge_voids_then_direct_charges(tmp_db) -> None:
+    """When final > authorized: cancel pre-auth then issue a direct charge."""
+    row = {**_BASE_ROW_WITH_CARD}
+    charge_result = {"id": "pay_direct", "amount_money": {"amount": 750, "currency": "USD"}}
+
+    with (
+        patch("db.get_session_by_booking_id", new=AsyncMock(return_value=row)),
+        patch("square.cancel_payment", new=AsyncMock(return_value={"id": "pay_preauth"})) as mock_cancel,
+        patch("square.charge_card_payment", new=AsyncMock(return_value=charge_result)) as mock_charge,
+        patch("square.capture_payment", new=AsyncMock()) as mock_capture,
+        patch("db.mark_captured", new=AsyncMock()) as mock_captured,
+    ):
+        await _handle_finalize(_good_payload(750))
+        mock_cancel.assert_called_once_with(payment_id="pay_preauth")
+        mock_charge.assert_called_once()
+        charge_kwargs = mock_charge.call_args.kwargs
+        assert charge_kwargs["amount_cents"] == 750
+        assert charge_kwargs["card_id"] == "card_abc"
+        assert charge_kwargs["customer_id"] == "cust_xyz"
+        mock_capture.assert_not_called()
+        mock_captured.assert_called_once_with(
+            idempotency_key=IK,
+            square_capture_payment_id="pay_direct",
+            captured_amount_cents=750,
+        )
+
+
+async def test_overcharge_does_not_trigger_when_equal_to_authorized(tmp_db) -> None:
+    """final == authorized uses the normal capture path, not void+recharge."""
+    row = {**_BASE_ROW_WITH_CARD}  # authorized_amount_cents=500
+    payment_result = {"id": "pay_ok", "amount_money": {"amount": 500}}
+
+    with (
+        patch("db.get_session_by_booking_id", new=AsyncMock(return_value=row)),
+        patch("square.capture_payment", new=AsyncMock(return_value=payment_result)) as mock_capture,
+        patch("square.cancel_payment", new=AsyncMock()) as mock_cancel,
+        patch("square.charge_card_payment", new=AsyncMock()) as mock_charge,
+        patch("db.mark_captured", new=AsyncMock()),
+    ):
+        await _handle_finalize(_good_payload(500))
+        mock_capture.assert_called_once()
+        mock_cancel.assert_not_called()
+        mock_charge.assert_not_called()
+
+
+async def test_overcharge_missing_card_calls_mark_failed(tmp_db) -> None:
+    """If square_card_id is missing, overcharge must mark_failed without charging."""
+    row = {**_BASE_ROW_WITH_CARD, "square_card_id": None}
+
+    with (
+        patch("db.get_session_by_booking_id", new=AsyncMock(return_value=row)),
+        patch("square.cancel_payment", new=AsyncMock(return_value={"id": "pay_preauth"})),
+        patch("square.charge_card_payment", new=AsyncMock()) as mock_charge,
+        patch("db.mark_failed", new=AsyncMock()) as mock_failed,
+    ):
+        await _handle_finalize(_good_payload(750))
+        mock_charge.assert_not_called()
+        mock_failed.assert_called_once()
+        assert "overcharge" in mock_failed.call_args.args[1]
+
+
+async def test_overcharge_void_fails_still_charges(tmp_db) -> None:
+    """If the void step fails, the direct charge still proceeds (hold expires on its own)."""
+    row = {**_BASE_ROW_WITH_CARD}
+    charge_result = {"id": "pay_direct", "amount_money": {"amount": 750}}
+
+    with (
+        patch("db.get_session_by_booking_id", new=AsyncMock(return_value=row)),
+        patch("square.cancel_payment", new=AsyncMock(side_effect=RuntimeError("void error"))),
+        patch("square.charge_card_payment", new=AsyncMock(return_value=charge_result)) as mock_charge,
+        patch("db.mark_failed", new=AsyncMock()) as mock_failed,
+        patch("db.mark_captured", new=AsyncMock()) as mock_captured,
+        patch("asyncio.sleep", new=AsyncMock()),
+    ):
+        await _handle_finalize(_good_payload(750))
+        mock_charge.assert_called_once()
+        mock_captured.assert_called_once()
+        mock_failed.assert_not_called()
+
+
+async def test_overcharge_charge_fails_all_retries_calls_mark_failed(tmp_db) -> None:
+    """If the direct charge fails all retries after a successful void, mark_failed."""
+    row = {**_BASE_ROW_WITH_CARD}
+
+    with (
+        patch("db.get_session_by_booking_id", new=AsyncMock(return_value=row)),
+        patch("square.cancel_payment", new=AsyncMock(return_value={"id": "pay_preauth"})),
+        patch("square.charge_card_payment", new=AsyncMock(side_effect=RuntimeError("charge error"))),
+        patch("db.mark_failed", new=AsyncMock()) as mock_failed,
+        patch("db.mark_captured", new=AsyncMock()) as mock_captured,
+        patch("asyncio.sleep", new=AsyncMock()),
+    ):
+        await _handle_finalize(_good_payload(750))
+        mock_failed.assert_called_once()
+        mock_captured.assert_not_called()
+        assert "direct charge failed" in mock_failed.call_args.args[1]
+
+
+async def test_overcharge_charge_retries_on_failure_then_succeeds(tmp_db) -> None:
+    """Direct charge retries N-1 times before succeeding on the last attempt."""
+    row = {**_BASE_ROW_WITH_CARD}
+    charge_result = {"id": "pay_direct", "amount_money": {"amount": 750}}
+    call_count = {"n": 0}
+
+    async def flaky_charge(**kwargs):
+        call_count["n"] += 1
+        if call_count["n"] < _MAX_RETRIES:
+            raise RuntimeError("transient charge error")
+        return charge_result
+
+    with (
+        patch("db.get_session_by_booking_id", new=AsyncMock(return_value=row)),
+        patch("square.cancel_payment", new=AsyncMock(return_value={"id": "pay_preauth"})),
+        patch("square.charge_card_payment", new=AsyncMock(side_effect=flaky_charge)),
+        patch("db.mark_captured", new=AsyncMock()) as mock_captured,
+        patch("asyncio.sleep", new=AsyncMock()),
+    ):
+        await _handle_finalize(_good_payload(750))
+        assert call_count["n"] == _MAX_RETRIES
+        mock_captured.assert_called_once()
+
+
+async def test_overcharge_idempotency_key_is_stable(tmp_db) -> None:
+    """The same idempotency key is used for the direct charge on every retry attempt."""
+    row = {**_BASE_ROW_WITH_CARD}
+    charge_result = {"id": "pay_direct", "amount_money": {"amount": 750}}
+    keys_used: list[str] = []
+
+    async def capture_idem_key(**kwargs):
+        keys_used.append(kwargs["idempotency_key"])
+        return charge_result
+
+    with (
+        patch("db.get_session_by_booking_id", new=AsyncMock(return_value=row)),
+        patch("square.cancel_payment", new=AsyncMock(return_value={"id": "pay_preauth"})),
+        patch("square.charge_card_payment", new=AsyncMock(side_effect=capture_idem_key)),
+        patch("db.mark_captured", new=AsyncMock()),
+    ):
+        await _handle_finalize(_good_payload(750))
+        assert len(keys_used) == 1
+        assert keys_used[0].startswith("fin:")
+

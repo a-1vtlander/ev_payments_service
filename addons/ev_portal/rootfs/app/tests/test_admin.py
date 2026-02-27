@@ -8,14 +8,17 @@ Covers:
   - Auth: session cookie, Basic Auth, unauthenticated browser, unauthenticated API
   - Admin index (GET /admin/)
   - Admin health (GET /admin/health)
+  - Retry charge (POST /admin/sessions/{ik}/retry)
 """
 
 from __future__ import annotations
 
 import pytest
 import pytest_asyncio
+from unittest.mock import AsyncMock, patch
 from httpx import ASGITransport, AsyncClient
 
+import db
 import state
 
 # ---------------------------------------------------------------------------
@@ -219,3 +222,119 @@ async def test_admin_index_with_valid_session_returns_html(admin_client: AsyncCl
     resp = await admin_client.get("/admin/")
     assert resp.status_code == 200
     assert "Sign out" in resp.text
+
+
+# ---------------------------------------------------------------------------
+# Retry charge (POST /admin/sessions/{ik}/retry)
+# ---------------------------------------------------------------------------
+
+from tests.conftest import TEST_BOOKING_ID, TEST_CHARGER_ID, TEST_SESSION_ID
+
+_RETRY_IK = f"ev:{TEST_CHARGER_ID}:{TEST_BOOKING_ID}"
+
+_FAILED_SESSION = {
+    "idempotency_key":         _RETRY_IK,
+    "charger_id":              TEST_CHARGER_ID,
+    "booking_id":              TEST_BOOKING_ID,
+    "session_id":              TEST_SESSION_ID,
+    "state":                   "FAILED",
+    "square_environment":      "sandbox",
+    "square_payment_id":       "pay_preauth",
+    "square_card_id":          "card_test",
+    "square_customer_id":      "cust_test",
+    "authorized_amount_cents": 5000,
+}
+
+
+def _auth_cookie(admin_client: AsyncClient) -> None:
+    from admin.auth import SESSION_COOKIE, make_session_token
+    admin_client.cookies.set(SESSION_COOKIE, make_session_token(TEST_ADMIN_USER))
+
+
+async def test_retry_success_marks_captured(admin_client: AsyncClient) -> None:
+    """Successful retry: direct charge fires and DB state moves to CAPTURED."""
+    _auth_cookie(admin_client)
+    await db.upsert_session(_FAILED_SESSION)
+    await db.mark_failed(_RETRY_IK, "previous error")
+
+    charge_result = {"id": "pay_retry", "amount_money": {"amount": 4500, "currency": "USD"}}
+    with patch("square.charge_card_payment", new=AsyncMock(return_value=charge_result)):
+        resp = await admin_client.post(
+            f"/admin/sessions/{_RETRY_IK}/retry",
+            json={"amount_cents": 4500},
+            follow_redirects=False,
+        )
+
+    assert resp.status_code in (200, 303)
+    row = await db.get_session(_RETRY_IK)
+    assert row["state"] == "CAPTURED"
+    assert row["captured_amount_cents"] == 4500
+
+
+async def test_retry_wrong_state_returns_409(admin_client: AsyncClient) -> None:
+    """Only FAILED sessions can be retried."""
+    _auth_cookie(admin_client)
+    session = {**_FAILED_SESSION, "state": "AUTHORIZED"}
+    await db.upsert_session(session)
+
+    with patch("square.charge_card_payment", new=AsyncMock()) as mock_charge:
+        resp = await admin_client.post(
+            f"/admin/sessions/{_RETRY_IK}/retry",
+            json={"amount_cents": 4500},
+        )
+
+    assert resp.status_code == 409
+    mock_charge.assert_not_called()
+
+
+async def test_retry_missing_card_returns_422(admin_client: AsyncClient) -> None:
+    """If no stored card/customer, 422 is returned."""
+    _auth_cookie(admin_client)
+    session = {**_FAILED_SESSION, "square_card_id": None, "square_customer_id": None}
+    await db.upsert_session(session)
+    await db.mark_failed(_RETRY_IK, "previous error")
+
+    with patch("square.charge_card_payment", new=AsyncMock()) as mock_charge:
+        resp = await admin_client.post(
+            f"/admin/sessions/{_RETRY_IK}/retry",
+            json={"amount_cents": 4500},
+        )
+
+    assert resp.status_code == 422
+    mock_charge.assert_not_called()
+
+
+async def test_retry_square_error_returns_502(admin_client: AsyncClient) -> None:
+    """If Square raises, 502 is returned and DB state stays FAILED."""
+    _auth_cookie(admin_client)
+    await db.upsert_session(_FAILED_SESSION)
+    await db.mark_failed(_RETRY_IK, "previous error")
+
+    with patch("square.charge_card_payment", new=AsyncMock(side_effect=RuntimeError("sq down"))):
+        resp = await admin_client.post(
+            f"/admin/sessions/{_RETRY_IK}/retry",
+            json={"amount_cents": 4500},
+        )
+
+    assert resp.status_code == 502
+    row = await db.get_session(_RETRY_IK)
+    assert row["state"] == "FAILED"
+
+
+async def test_retry_html_form_redirects_to_detail(admin_client: AsyncClient) -> None:
+    """HTML form POST (amount_dollars) redirects to the session detail page."""
+    _auth_cookie(admin_client)
+    await db.upsert_session(_FAILED_SESSION)
+    await db.mark_failed(_RETRY_IK, "previous error")
+
+    charge_result = {"id": "pay_retry2", "amount_money": {"amount": 5000}}
+    with patch("square.charge_card_payment", new=AsyncMock(return_value=charge_result)):
+        resp = await admin_client.post(
+            f"/admin/sessions/{_RETRY_IK}/retry",
+            data={"amount_dollars": "50.00"},
+            headers={"accept": "text/html"},
+            follow_redirects=False,
+        )
+
+    assert resp.status_code == 303
+    assert "/admin/sessions/" in resp.headers["location"]

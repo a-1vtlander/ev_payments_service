@@ -14,6 +14,7 @@ Protected routes (session cookie or Basic Auth):
   POST /admin/sessions/{idempotency_key}/void          (AUTHORIZED → CANCELED)
   POST /admin/sessions/{idempotency_key}/reauthorize   (CAPTURED  → AUTHORIZED)
   POST /admin/sessions/{idempotency_key}/refund        (CAPTURED  → REFUNDED)
+  POST /admin/sessions/{idempotency_key}/retry         (FAILED    → CAPTURED)
   POST /admin/sessions/{idempotency_key}/note
   POST /admin/sessions/{idempotency_key}/soft_delete
 """
@@ -243,6 +244,7 @@ async def list_sessions(
         "CAPTURED":               "#188038",
         "CANCELED":               "#c00",
         "REFUNDED":               "#e37400",
+        "FAILED":                 "#8b0000",
         "ERROR":                  "#c00",
     }
 
@@ -488,6 +490,36 @@ async def get_session(
         </form>
       </dialog>"""
 
+    # ── FAILED actions ────────────────────────────────────────────────────
+    retry_btn = ""
+    if state_val == "FAILED":
+        retry_btn = f"""
+      <button onclick="document.getElementById('retryDialog').showModal()"
+        style="background:#8b0000;color:#fff;border:none;padding:6px 14px;border-radius:4px;cursor:pointer">
+        Retry charge</button>
+      <dialog id="retryDialog" style="border-radius:8px;padding:20px;min-width:320px;border:1px solid #ddd">
+        <h3 style="margin:0 0 8px">Retry charge</h3>
+        <p style="font-size:.85rem;color:#555;margin:0 0 12px">
+          Charges the stored card directly (pre-auth bypass).<br>
+          Previous error: <em>{_html.escape(str(row.get('last_error') or ''))}</em></p>
+        <form method="post" action="/admin/sessions/{url_ik}/retry">
+          <label style="display:block;margin-bottom:10px;font-size:.9rem">Amount&nbsp;($)
+            <input type="number" name="amount_dollars" step="0.01" min="0.01"
+              value="{auth_dollars:.2f}" required autofocus
+              style="display:block;width:100%;box-sizing:border-box;margin-top:4px;
+                     padding:7px 9px;border:1px solid #ccc;border-radius:4px;font-size:1rem">
+          </label>
+          <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px">
+            <button type="button" onclick="this.closest('dialog').close()"
+              style="padding:7px 16px;border:1px solid #ccc;border-radius:4px;cursor:pointer;background:#fff">
+              Cancel</button>
+            <button type="submit"
+              style="background:#8b0000;color:#fff;border:none;padding:7px 16px;border-radius:4px;cursor:pointer">
+              Confirm retry</button>
+          </div>
+        </form>
+      </dialog>"""
+
     note_form = f"""<form method="post" action="/admin/sessions/{url_ik}/note" style="margin-top:.5rem">
       <input type="text" name="note" placeholder="Add note…"
         style="padding:6px 10px;border:1px solid #ccc;border-radius:4px;width:300px">
@@ -520,6 +552,7 @@ async def get_session(
     {void_btn}
     {reauth_btn}
     {refund_btn}
+    {retry_btn}
     {note_form}
   </div>
 </body>
@@ -747,6 +780,84 @@ async def void_session(
     if "text/html" in request.headers.get("accept", ""):
         return RedirectResponse(url=f"/admin/sessions/{urllib.parse.quote(idempotency_key, safe='')}", status_code=303)
     return {"ok": True, "idempotency_key": idempotency_key, "square_result": result}
+
+
+@router.post("/sessions/{idempotency_key}/retry")
+async def retry_session(
+    idempotency_key: str,
+    request: Request,
+    actor: Annotated[str, Depends(require_admin)],
+):
+    """
+    Admin-initiated direct charge for a FAILED session.
+
+    Charges the stored card immediately (autocomplete=True) without going
+    through a pre-auth. The operator can specify a custom amount.
+    Accepts JSON { "amount_cents": N } or HTML form { "amount_dollars": "N.NN" }.
+    """
+    ct = request.headers.get("content-type", "")
+    if "application/x-www-form-urlencoded" in ct or "multipart/form-data" in ct:
+        form = await request.form()
+        amount_cents = int(round(float(form.get("amount_dollars", "0")) * 100))
+    else:
+        data = await request.json()
+        amount_cents = data.get("amount_cents") or int(round(float(data.get("amount_dollars", 0)) * 100))
+
+    if amount_cents <= 0:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                            detail="amount must be > 0")
+
+    session = await _get_or_404(idempotency_key)
+    if session.get("state") != "FAILED":
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT,
+                            detail=f"State is {session.get('state')!r}; can only retry FAILED sessions")
+
+    card_id     = session.get("square_card_id")
+    customer_id = session.get("square_customer_id")
+    booking_id  = session.get("booking_id") or idempotency_key
+    if not card_id or not customer_id:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                            detail="No stored card/customer ID on this session – cannot retry")
+
+    # Stable idempotency key so Square deduplicates on double-click.
+    retry_idem = f"retry:{idempotency_key[:35]}"
+
+    try:
+        result = await square.charge_card_payment(
+            card_id=card_id,
+            customer_id=customer_id,
+            booking_id=booking_id,
+            amount_cents=amount_cents,
+            idempotency_key=retry_idem,
+        )
+    except Exception as exc:
+        log.error("admin retry failed for %s: %s", idempotency_key, exc)
+        await db.write_audit_log(
+            actor=actor, action="retry", idempotency_key=idempotency_key,
+            before_json=json.dumps(session),
+            result_json=json.dumps({"error": str(exc)}),
+        )
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc))
+
+    charged_id    = result.get("id", "")
+    charged_cents = result.get("amount_money", {}).get("amount", amount_cents)
+    await db.mark_captured(
+        idempotency_key=idempotency_key,
+        square_capture_payment_id=charged_id,
+        captured_amount_cents=charged_cents,
+    )
+    after = await db.get_session(idempotency_key)
+    await db.write_audit_log(
+        actor=actor, action="retry", idempotency_key=idempotency_key,
+        before_json=json.dumps(session), after_json=json.dumps(after),
+        result_json=json.dumps(result),
+    )
+
+    if "text/html" in request.headers.get("accept", ""):
+        return RedirectResponse(url=f"/admin/sessions/{urllib.parse.quote(idempotency_key, safe='')}", status_code=303)
+    return {"ok": True, "idempotency_key": idempotency_key,
+            "charged_payment_id": charged_id, "amount_cents": charged_cents,
+            "square_result": result}
 
 
 @router.post("/sessions/{idempotency_key}/refund")

@@ -13,8 +13,10 @@ Flow:
   1. Deserialise payload.
   2. Look up the session row by booking_id.
   3. Guard: skip if already CAPTURED or VOIDED.
-  4a. final_amount_cents == 0  → cancel (void) the pre-auth, mark VOIDED.
-  4b. final_amount_cents  > 0  → PUT amount + POST /complete (3 tries, 5 s back-off).
+  4a. final_amount_cents == 0               → void pre-auth, mark VOIDED.
+  4b. final_amount_cents <= authorized_amt  → PUT amount + POST /complete (capture).
+  4c. final_amount_cents >  authorized_amt  → void pre-auth, then POST /v2/payments
+                                               as a direct charge (autocomplete=True).
   5. On success  → db.mark_captured() / db.mark_voided()
      On exhausted retries → db.mark_failed()
 """
@@ -123,8 +125,106 @@ async def _handle_finalize(payload_str: str) -> None:
         await db.mark_failed(idempotency_key, f"void failed after {_MAX_RETRIES} attempts: {last_error}")
         return
 
-    # ── Non-zero: capture at final amount ─────────────────────────────────
-    last_error = None
+    # ── Non-zero: capture (or void+recharge if final exceeds pre-auth) ────
+    authorized_amount_cents: int = row.get("authorized_amount_cents") or 0
+    exceeds_preauth = final_amount_cents > authorized_amount_cents
+
+    if exceeds_preauth:
+        log.warning(
+            "finalize_session: final_amount_cents=%d exceeds authorized=%d for %r "
+            "— voiding pre-auth and issuing direct charge",
+            final_amount_cents,
+            authorized_amount_cents,
+            idempotency_key,
+        )
+
+        # ── Step A: best-effort void of the pre-auth ──────────────────────
+        # Failure here is non-fatal — the hold will expire on its own.
+        for attempt in range(1, _MAX_RETRIES + 1):
+            try:
+                await square.cancel_payment(payment_id=square_payment_id)
+                log.info(
+                    "finalize_session: pre-auth voided for overcharge  payment_id=%r",
+                    square_payment_id,
+                )
+                break
+            except Exception as exc:  # noqa: BLE001
+                log.warning(
+                    "finalize_session: void attempt %d/%d failed (non-fatal, hold will expire): %s",
+                    attempt, _MAX_RETRIES, exc,
+                )
+                if attempt < _MAX_RETRIES:
+                    await asyncio.sleep(_RETRY_DELAY_S)
+
+        # ── Step B: direct charge for final amount ─────────────────────────
+        square_card_id     = row.get("square_card_id")
+        square_customer_id = row.get("square_customer_id")
+        if not square_card_id or not square_customer_id:
+            log.error(
+                "finalize_session: missing card/customer for direct charge: "
+                "card=%r customer=%r",
+                square_card_id, square_customer_id,
+            )
+            await db.mark_failed(
+                idempotency_key,
+                f"overcharge: missing card_id={square_card_id!r} or "
+                f"customer_id={square_customer_id!r}",
+            )
+            return
+
+        # Stable idempotency key so Square deduplicates retries.
+        charge_idem = f"fin:{idempotency_key}"[:45]
+
+        last_error: Optional[str] = None
+        for attempt in range(1, _MAX_RETRIES + 1):
+            log.info(
+                "finalize_session: direct-charge attempt %d/%d  amount=%d cents",
+                attempt, _MAX_RETRIES, final_amount_cents,
+            )
+            try:
+                payment = await square.charge_card_payment(
+                    card_id=square_card_id,
+                    customer_id=square_customer_id,
+                    booking_id=booking_id,
+                    amount_cents=final_amount_cents,
+                    idempotency_key=charge_idem,
+                )
+                charged_id: str    = payment.get("id", "")
+                charged_cents: int = payment.get("amount_money", {}).get(
+                    "amount", final_amount_cents
+                )
+                await db.mark_captured(
+                    idempotency_key=idempotency_key,
+                    square_capture_payment_id=charged_id,
+                    captured_amount_cents=charged_cents,
+                )
+                log.info(
+                    "finalize_session: OVERCHARGE CAPTURED  idempotency_key=%r  "
+                    "charged_id=%r  cents=%d",
+                    idempotency_key, charged_id, charged_cents,
+                )
+                return
+            except Exception as exc:  # noqa: BLE001
+                last_error = str(exc)
+                log.warning(
+                    "finalize_session: direct-charge attempt %d failed: %s",
+                    attempt, exc,
+                )
+                if attempt < _MAX_RETRIES:
+                    await asyncio.sleep(_RETRY_DELAY_S)
+
+        log.error(
+            "finalize_session: all %d direct-charge attempts failed for %r — %s",
+            _MAX_RETRIES, idempotency_key, last_error,
+        )
+        await db.mark_failed(
+            idempotency_key,
+            f"direct charge failed after {_MAX_RETRIES} attempts: {last_error}",
+        )
+        return
+
+    # ── Normal path: capture pre-auth at final amount ──────────────────────
+    last_error: Optional[str] = None
     for attempt in range(1, _MAX_RETRIES + 1):
         log.info(
             "finalize_session: capture attempt %d/%d  payment_id=%r  amount=%d cents",

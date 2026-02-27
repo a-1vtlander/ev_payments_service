@@ -20,12 +20,12 @@ body {
 }
 
 .logo {
-  height: 80px;
+  height: 70px;
   width: auto;
 }
 
 .logo-square {
-  height: 32px;
+  height: 30px;
   width: auto;
 }
 
@@ -61,15 +61,28 @@ body {
 }
 
 /* ── headings / sub ──────────────────────────────────────────────────────── */
-h1      { font-size: 1.4rem; margin-bottom: .25rem; }
+h1 {
+  font-size: clamp(1rem, 4vw, 1.4rem);
+  margin-bottom: .25rem;
+}
 .welcome {
-  font-size: 1.3rem;
+  font-size: clamp(0.95rem, 3.5vw, 1.3rem);
   font-weight: 700;
   color: #1a1a1a;
   margin: 0 0 .4rem;
   letter-spacing: -.01em;
 }
-.sub { color: #555; margin-bottom: 1.5rem; font-size: .95rem; }
+.sub {
+  font-size: clamp(0.8rem, 3vw, .95rem);
+  color: #555;
+  margin-bottom: 1.2rem;
+}
+
+@media (max-width: 480px) {
+  h1 { font-size: 0.85rem; }
+  .welcome { font-size: 0.8rem; }
+  .sub { font-size: 0.7rem; }
+}
 
 /* ── info cards ──────────────────────────────────────────────────────────── */
 .info-card {

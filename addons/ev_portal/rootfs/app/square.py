@@ -275,6 +275,60 @@ async def cancel_payment(payment_id: str) -> dict:
     return resp.json()["payment"]
 
 
+async def charge_card_payment(
+    card_id: str,
+    customer_id: str,
+    booking_id: str,
+    amount_cents: int,
+    idempotency_key: str,
+) -> dict:
+    """
+    Create a direct (immediate) charge against a stored card (autocomplete=True).
+
+    Used when the final amount exceeds the pre-authorised amount — the
+    pre-auth is voided first, then this function charges the card for the
+    full final amount.
+
+    Returns the full ``payment`` object from Square.
+    """
+    url = f"{_base_url()}/v2/payments"
+    amount_dollars = amount_cents / 100
+    body = {
+        "idempotency_key": idempotency_key,
+        "source_id":       card_id,
+        "customer_id":     customer_id,
+        "autocomplete":    True,
+        "amount_money": {
+            "amount":   amount_cents,
+            "currency": "USD",
+        },
+        "location_id": state._square_config["location_id"],
+        "note": (
+            f"EV charger final charge for booking {booking_id}. "
+            f"${amount_dollars:.2f} (exceeded pre-auth; prior hold voided)."
+        ),
+        "reference_id": booking_id[:40],
+    }
+    log.info(
+        "POST %s\nRequest body:\n%s",
+        url, json.dumps(body, indent=2),
+    )
+
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        resp = await client.post(url, json=body, headers=_headers())
+
+    log.info(
+        "POST %s → HTTP %s\nResponse body:\n%s",
+        url, resp.status_code, resp.text,
+    )
+    if not resp.is_success:
+        raise RuntimeError(
+            f"Square /v2/payments (direct charge) error {resp.status_code}: {resp.text}"
+        )
+    data = resp.json()
+    return data["payment"]
+
+
 async def refund_payment(
     payment_id: str,
     amount_cents: Optional[int],
