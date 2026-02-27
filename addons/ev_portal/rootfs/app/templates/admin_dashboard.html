@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>EV Portal Admin</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="/static/css/portal.css">
+  <style>
+    .admin-nav {
+      display: flex;
+      gap: .75rem;
+      flex-wrap: wrap;
+      margin-bottom: 1.5rem;
+    }
+    .admin-nav a {
+      display: inline-block;
+      padding: .5rem 1rem;
+      background: #1a73e8;
+      color: #fff;
+      border-radius: 6px;
+      text-decoration: none;
+      font-size: .9rem;
+      font-weight: 600;
+    }
+    .admin-nav a:hover { background: #1558b0; }
+    .admin-nav a.danger { background: #c00; }
+    .admin-nav a.danger:hover { background: #900; }
+    .admin-nav a.secondary { background: #444; }
+    .admin-nav a.secondary:hover { background: #222; }
+    .section-title {
+      font-size: .75rem;
+      text-transform: uppercase;
+      color: #888;
+      letter-spacing: .06em;
+      margin: 1.5rem 0 .5rem;
+    }
+    .session-link { font-size: .85rem; margin-top: .5rem; }
+    .badge {
+      display: inline-block;
+      padding: .15rem .5rem;
+      border-radius: 4px;
+      font-size: .8rem;
+      font-weight: 700;
+      color: #fff;
+    }
+  </style>
+</head>
+<body>
+
+  <div class="logo-header">
+    <img
+      src="/static/images/Extravio EV Management.webp"
+      alt="Extravio EV Management"
+      class="logo"
+    >
+    <h1 class="header-title">Admin Dashboard</h1>
+  </div>
+
+  <div class="container">
+
+    <div class="admin-nav">
+      <a href="/admin/sessions">&#128203;&nbsp;All Sessions</a>
+      <a href="/admin/health" class="secondary">&#10003;&nbsp;Health</a>
+      <a href="/admin/docs" class="secondary">&#128196;&nbsp;API Docs</a>
+      <a href="/admin/logout" class="danger">Sign out</a>
+    </div>
+
+    <!-- ── System status ─────────────────────────────────────── -->
+    <div class="section-title">System</div>
+
+    <div class="info-card">
+      <div class="label">MQTT</div>
+      <div class="value">
+        <span class="badge" style="background: {{ status_color }}">{{ mqtt_status }}</span>
+      </div>
+    </div>
+
+    <div class="info-card">
+      <div class="label">Home ID</div>
+      <div class="value"><code>{{ home_id }}</code></div>
+    </div>
+
+    <div class="info-card">
+      <div class="label">Charger ID</div>
+      <div class="value"><code>{{ charger_id }}</code></div>
+    </div>
+
+    <!-- ── Most-recent session ───────────────────────────────── -->
+    <div class="section-title">Most Recent Session</div>
+
+    {% if session %}
+    <div class="info-card">
+      <div class="label">State</div>
+      <div class="value">
+        <span class="badge" style="background: {{ session.state_color }}">{{ session.state }}</span>
+      </div>
+    </div>
+    {% if session.guest_name %}
+    <div class="info-card">
+      <div class="label">Guest</div>
+      <div class="value">{{ session.guest_name }}</div>
+    </div>
+    {% endif %}
+    <div class="info-card">
+      <div class="label">Authorization</div>
+      <div class="value">{{ session.auth_display }}</div>
+    </div>
+    {% if session.cap_display %}
+    <div class="info-card">
+      <div class="label">Captured</div>
+      <div class="value">{{ session.cap_display }}</div>
+    </div>
+    {% endif %}
+    {% if session.card_brand or session.card_last4 %}
+    <div class="info-card">
+      <div class="label">Card</div>
+      <div class="value">{{ session.card_brand }} ending {{ session.card_last4 }}</div>
+    </div>
+    {% endif %}
+    <div class="info-card">
+      <div class="label">Updated</div>
+      <div class="value">{{ session.updated_at }}</div>
+    </div>
+    <p class="session-link">
+      <a href="/admin/sessions/{{ session.idempotency_key | urlencode }}">View full session &rarr;</a>
+      &nbsp;|&nbsp;
+      <a href="/admin/sessions">All sessions &rarr;</a>
+    </p>
+    {% else %}
+    <p style="color:#888;font-size:.9rem">No sessions recorded yet.</p>
+    {% endif %}
+
+    <!-- ── MQTT topics (collapsed summary) ──────────────────── -->
+    <details style="margin-top:1.5rem">
+      <summary class="section-title" style="cursor:pointer;display:list-item">MQTT Topics</summary>
+      <div class="info-card" style="margin-top:.5rem">
+        <div class="label">Booking base</div>
+        <div class="value"><code>{{ base_topic }}</code></div>
+      </div>
+      <div class="info-card">
+        <div class="label">Booking response</div>
+        <div class="value"><code>{{ booking_response_topic }}</code></div>
+      </div>
+      <div class="info-card">
+        <div class="label">Authorize request</div>
+        <div class="value"><code>{{ authorize_request_topic }}</code></div>
+      </div>
+      <div class="info-card">
+        <div class="label">Authorize response</div>
+        <div class="value"><code>{{ authorize_response_topic }}</code></div>
+      </div>
+    </details>
+
+  </div>
+</body>
+</html>

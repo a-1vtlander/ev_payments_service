@@ -1,33 +1,35 @@
 """
 EV Charger Portal - application entry point.
 
-Guest server (HTTP, port 8090) – anonymous, LAN-only.
+Guest server (HTTPS, port 8090) – LAN / Tailscale only (access middleware).
 Admin server (HTTPS, port 8091) – started by serve.py, requires Basic Auth.
+                                   NOT mounted on this app.
 
 All logic lives in:
   state.py                 - shared globals
   mqtt.py                  - MQTT client factory
   square.py                - Square API helpers
   lifespan.py              - startup / shutdown
-  endpoints/index.py       - GET /
+  access.py                - IP access-control middleware (public app only)
   endpoints/health.py      - GET /health
   endpoints/debug.py       - GET /debug
   endpoints/start.py       - GET /start
-  endpoints/payment_post_process.py - GET /payment_post_process
-  admin/                   - /admin/* routes (admin HTTPS server only)
+  endpoints/submit_payment.py - POST /submit_payment
+  endpoints/session.py     - GET /session/{uid}
+  admin/                   - /admin/* routes (admin HTTPS server, port 8091 only)
 """
 
 import logging
 from pathlib import Path
 
-from fastapi import Request
-from fastapi import FastAPI
-from fastapi.responses import RedirectResponse
+from fastapi import FastAPI, Request
+from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
+from access import AccessControlMiddleware
 from lifespan import lifespan
 import state
-from endpoints import debug, health, index, session, start, submit_payment
+from endpoints import debug, health, session, start, submit_payment
 
 logging.basicConfig(
     level=logging.INFO,
@@ -36,11 +38,13 @@ logging.basicConfig(
 
 app = FastAPI(title="EV Charger Portal", lifespan=lifespan)
 
-# ── static assets ─────────────────────────────────────────────────────────
+# ── Access control: LAN / Tailscale only; Cloudflare-tunnel-aware ─────────
+app.add_middleware(AccessControlMiddleware)
+
+# ── Static assets ──────────────────────────────────────────────────────────
 _APP_DIR = Path(__file__).parent
 app.mount("/static", StaticFiles(directory=str(_APP_DIR / "static")), name="static")
 
-app.include_router(index.router)
 app.include_router(health.router)
 app.include_router(debug.router)
 app.include_router(start.router)
@@ -48,41 +52,41 @@ app.include_router(submit_payment.router)
 app.include_router(session.router)
 
 
+# ── GET / → redirect to /start ─────────────────────────────────────────────
+@app.get("/", include_in_schema=False)
+async def root_redirect(request: Request):
+    """Redirect root to /start with optional default_charger_id pre-filled."""
+    default_charger = state._access_config.get("default_charger_id", "").strip()
+    target = f"/start?charger_id={default_charger}" if default_charger else "/start"
+    return HTMLResponse(
+        content=(
+            f'<meta http-equiv="refresh" content="0; url={target}">'
+            f'<script>window.location.replace("{target}");</script>'
+        ),
+        status_code=200,
+    )
+
+
+# ── Apple Pay domain verification ──────────────────────────────────────────
+@app.get(
+    "/.well-known/apple-developer-merchantid-domain-association",
+    include_in_schema=False,
+)
+async def apple_pay_domain_verification():
+    """
+    Serve Apple Pay domain association file as text/plain.
+    Returns 404 if applepay_domain_association is not configured.
+    Content is returned exactly as configured – no trimming, no extra newlines.
+    """
+    content = state._access_config.get("applepay_domain_association", "")
+    if not content:
+        return HTMLResponse(content="Not configured", status_code=404, media_type="text/plain")
+    return HTMLResponse(content=content, status_code=200, media_type="text/plain")
+
+
 # ── /enable-ev-session alias ───────────────────────────────────────────────
 @app.get("/enable-ev-session", include_in_schema=False)
 async def enable_ev_session_alias(request: Request):
     """Friendly alias for /start – same handler, prettier URL for QR codes."""
     return await start.start_session(request)
-
-
-# ── admin redirect ──────────────────────────────────────────────────────
-
-def _admin_redirect_url(request: Request, path: str = "") -> str:
-    """Build https://<host>:8091/admin/<path> from the incoming request Host."""
-    import state
-    try:
-        host = request.headers.get("host", "") or ""
-        # Strip any existing port from the host header.
-        bare_host = host.split(":")[0] if ":" in host else host
-        if not bare_host:
-            bare_host = request.client.host if request.client else "localhost"
-    except Exception:
-        bare_host = "localhost"
-
-    admin_port = state._admin_config.get("port_https", 8091)
-    target = f"https://{bare_host}:{admin_port}/admin/"
-    if path:
-        target += path.lstrip("/")
-    return target
-
-
-@app.get("/admin", include_in_schema=False)
-@app.get("/admin/", include_in_schema=False)
-async def redirect_to_admin(request: Request):
-    return RedirectResponse(url=_admin_redirect_url(request), status_code=302)
-
-
-@app.get("/admin/{path:path}", include_in_schema=False)
-async def redirect_admin_path(path: str, request: Request):
-    return RedirectResponse(url=_admin_redirect_url(request, path), status_code=302)
 

@@ -119,6 +119,40 @@ h1 {
 }
 .name-row input:focus { outline: none; border-color: #006aff; }
 
+/* ── Apple Pay ───────────────────────────────────────────────────────────── */
+#apple-pay-container { margin-bottom: .5rem; }
+
+/* Square renders the native Apple Pay button inside this div automatically */
+#apple-pay-button {
+  -webkit-appearance: -apple-pay-button;
+  -apple-pay-button-type: plain;
+  -apple-pay-button-style: black;
+  width: 100%;
+  height: 48px;
+  border-radius: 6px;
+  cursor: pointer;
+  border: none;
+  display: block;
+}
+
+.pay-divider {
+  display: flex;
+  align-items: center;
+  gap: .75rem;
+  margin: 1rem 0;
+  color: #888;
+  font-size: .8rem;
+  text-transform: uppercase;
+  letter-spacing: .05em;
+}
+.pay-divider::before,
+.pay-divider::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: #d0d7de;
+}
+
 /* ── card form ───────────────────────────────────────────────────────────── */
 #card-container { min-height: 90px; margin-bottom: 1.25rem; }
 

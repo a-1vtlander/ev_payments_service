@@ -221,7 +221,8 @@ async def test_admin_index_with_valid_session_returns_html(admin_client: AsyncCl
     admin_client.cookies.set(SESSION_COOKIE, token)
     resp = await admin_client.get("/admin/")
     assert resp.status_code == 200
-    assert "Sign out" in resp.text
+    assert "Admin Dashboard" in resp.text
+    assert "All Sessions" in resp.text
 
 
 # ---------------------------------------------------------------------------
@@ -338,3 +339,37 @@ async def test_retry_html_form_redirects_to_detail(admin_client: AsyncClient) ->
 
     assert resp.status_code == 303
     assert "/admin/sessions/" in resp.headers["location"]
+
+
+# ---------------------------------------------------------------------------
+# Static files – admin app
+# ---------------------------------------------------------------------------
+
+_ADMIN_STATIC_FILES = [
+    "/static/css/portal.css",
+    "/static/js/payment.js",
+    "/static/images/Extravio%20EV%20Management.webp",
+    "/static/images/Square_Logo_2025_White.svg",
+]
+
+
+@pytest.mark.parametrize("path", _ADMIN_STATIC_FILES)
+async def test_admin_static_file_returns_200(admin_client: AsyncClient, path: str) -> None:
+    """Every known static asset must be served without error on the admin app."""
+    resp = await admin_client.get(path)
+    assert resp.status_code == 200, f"Admin static file {path} returned {resp.status_code}"
+
+
+async def test_admin_dashboard_static_refs_all_load(admin_client: AsyncClient) -> None:
+    """Parse the rendered admin dashboard and verify every /static/ reference loads."""
+    import re
+    _auth_cookie(admin_client)
+    page = await admin_client.get("/admin/")
+    assert page.status_code == 200
+
+    refs = re.findall(r'(?:src|href)="(/static/[^"]+)"', page.text)
+    assert refs, "No /static/ references found on admin dashboard"
+
+    for ref in set(refs):
+        r = await admin_client.get(ref)
+        assert r.status_code == 200, f"Admin dashboard references {ref!r} but got {r.status_code}"

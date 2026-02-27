@@ -178,35 +178,64 @@ async def _get_or_404(idempotency_key: str) -> dict:
 
 
 @router.get("/", response_class=HTMLResponse, include_in_schema=False)
-async def admin_index(actor: Annotated[str, Depends(require_admin)]):
-    """HTML dashboard shown after login."""
-    return f"""<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="utf-8">
-  <link rel="icon" href="data:,">
-  <title>EV Portal Admin</title>
-  <style>
-    body{{font-family:sans-serif;max-width:640px;margin:40px auto;padding:0 20px}}
-    h1{{font-size:1.5rem}} h2{{font-size:1.1rem;margin-top:1.5rem}}
-    ul{{line-height:2}} a{{color:#1a73e8}}
-    .logout{{float:right;font-size:.85rem;color:#666}}
-  </style>
-</head>
-<body>
-  <h1>EV Portal Admin <span class="logout"><a href="/admin/logout">Sign out</a></span></h1>
-  <p>Signed in as <strong>{actor}</strong><br><small style="color:#888">Buttons for Capture / Void / Refund / Reauthorize appear on individual session detail pages.</small></p>
-  <h2>Sessions</h2>
-  <ul>
-    <li><a href="/admin/sessions">GET /admin/sessions</a> – list all sessions</li>
-    <li><a href="/admin/sessions?include_deleted=true">GET /admin/sessions?include_deleted=true</a></li>
-  </ul>
-  <h2>API Docs</h2>
-  <ul>
-    <li><a href="/admin/docs">Swagger UI</a></li>
-  </ul>
-</body>
-</html>"""
+async def admin_index(request: Request, actor: Annotated[str, Depends(require_admin)]):
+    """Operator status dashboard – shows MQTT status and most-recent session."""
+    from portal_templates import templates as _tpl
+
+    _STATE_COLORS = {
+        "AWAITING_PAYMENT_INFO": "#f29900",
+        "AUTH_REQUESTED":        "#f29900",
+        "AUTHORIZED":            "#1a73e8",
+        "CAPTURED":              "#188038",
+        "CANCELED":              "#c00",
+        "REFUNDED":              "#e37400",
+        "FAILED":                "#c00",
+        "ERROR":                 "#c00",
+    }
+
+    mqtt_status = (
+        "connected"
+        if (state.mqtt_client and state.mqtt_client.is_connected())
+        else "disconnected"
+    )
+    home_id    = state._app_config.get("home_id",    "–")
+    charger_id = state._app_config.get("charger_id", "–")
+
+    recent = await db.list_sessions(limit=1)
+    session_row = recent[0] if recent else None
+    session_ctx = None
+    if session_row:
+        amount_cents = session_row.get("authorized_amount_cents") or 0
+        cap_cents    = session_row.get("captured_amount_cents")
+        sess_state   = session_row.get("state", "")
+        session_ctx = {
+            "idempotency_key": session_row.get("idempotency_key") or "",
+            "state":        sess_state,
+            "state_color":  _STATE_COLORS.get(sess_state, "#666"),
+            "guest_name":   session_row.get("guest_name") or "",
+            "auth_display": f"${amount_cents / 100:.2f} USD",
+            "cap_display":  f"${cap_cents / 100:.2f} USD" if cap_cents is not None else "",
+            "card_brand":   session_row.get("card_brand") or "",
+            "card_last4":   session_row.get("card_last4") or "",
+            "updated_at":   session_row.get("updated_at") or "",
+        }
+
+    return _tpl.TemplateResponse(
+        request,
+        "admin_dashboard.html",
+        {
+            "mqtt_status":              mqtt_status,
+            "status_color":             "green" if mqtt_status == "connected" else "red",
+            "home_id":                  home_id,
+            "charger_id":               charger_id,
+            "base_topic":               f"ev/charger/{home_id}/{charger_id}/booking",
+            "booking_response_topic":   state._booking_response_topic,
+            "authorize_request_topic":  state._authorize_request_topic,
+            "authorize_response_topic": state._authorize_response_topic,
+            "response_timeout":         int(state.RESPONSE_TIMEOUT),
+            "session":                  session_ctx,
+        },
+    )
 
 
 @router.get("/health")

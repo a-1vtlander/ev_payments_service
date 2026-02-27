@@ -45,6 +45,7 @@ def render_card_form(
         {
             "booking_id":         booking_id,
             "amount_display":     f"${amount_cents / 100:.2f} USD",
+            "amount_cents":       amount_cents,
             "js_url":             square.sdk_js_url(),
             "app_id":             state._square_config.get("app_id", ""),
             "location_id":        state._square_config.get("location_id", ""),

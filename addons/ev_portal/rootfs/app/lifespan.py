@@ -32,8 +32,9 @@ async def lifespan(app: FastAPI):
 
     # Admin config – also set here so that tests using LifespanManager don't
     # need to go through serve.py.
-    state._admin_config = cfg["admin"]
-    state._app_config   = app_cfg
+    state._admin_config  = cfg["admin"]
+    state._access_config = cfg["access"]
+    state._app_config    = app_cfg
 
     # Derive all MQTT topics from charger identity.
     home_id    = app_cfg["home_id"]

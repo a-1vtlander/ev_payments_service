@@ -1,6 +1,6 @@
 name: "EV Charger Portal"
 description: "Payment Manager AddOn for EV Sessions - Uses LAN-local HTTPS portal via MQTT with an HTTPS admin server"
-version: "1.0.6"
+version: "1.0.7"
 slug: "ev_portal"
 init: false
 webui: https://[HOST]:[PORT:8090]/
@@ -28,6 +28,11 @@ options:
   mqtt_password: ""
   home_id: ""
   charger_id: ""
+  default_charger_id: ""
+  applepay_domain_association: ""
+  access_allow_cidrs:
+    - "192.168.4.0/22"
+    - "100.64.0.0/10"
   square_sandbox: true
   square_sandbox_app_id: ""
   square_sandbox_access_token: ""
@@ -50,6 +55,10 @@ schema:
   mqtt_password: password
   home_id: str
   charger_id: str
+  default_charger_id: str
+  applepay_domain_association: str
+  access_allow_cidrs:
+    - str
   square_sandbox: bool
   square_sandbox_app_id: str
   square_sandbox_access_token: password

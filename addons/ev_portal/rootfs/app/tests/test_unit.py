@@ -46,13 +46,42 @@ async def test_health_returns_200(unit_client: AsyncClient) -> None:
 
 
 # ---------------------------------------------------------------------------
-# /  (index)
+# /  (root redirect to /start)
 # ---------------------------------------------------------------------------
 
-async def test_index_returns_html(unit_client: AsyncClient) -> None:
-    resp = await unit_client.get("/")
+async def test_index_redirects_to_start(unit_client: AsyncClient) -> None:
+    resp = await unit_client.get("/", follow_redirects=False)
     assert resp.status_code == 200
-    assert "text/html" in resp.headers["content-type"]
+    assert "/start" in resp.text
+
+
+async def test_index_includes_charger_id_when_configured(unit_client: AsyncClient) -> None:
+    import state as _state
+    _state._access_config["default_charger_id"] = "chargepoint:home:charger:1"
+    try:
+        resp = await unit_client.get("/", follow_redirects=False)
+        assert "chargepoint" in resp.text
+    finally:
+        _state._access_config.pop("default_charger_id", None)
+
+
+# ── Apple Pay domain verification ─────────────────────────────────────────
+
+async def test_apple_pay_returns_404_when_not_configured(unit_client: AsyncClient) -> None:
+    resp = await unit_client.get("/.well-known/apple-developer-merchantid-domain-association")
+    assert resp.status_code == 404
+
+
+async def test_apple_pay_returns_exact_content_when_configured(unit_client: AsyncClient) -> None:
+    import state as _state
+    _state._access_config["applepay_domain_association"] = "APPLE_PAY_CONTENT_12345"
+    try:
+        resp = await unit_client.get("/.well-known/apple-developer-merchantid-domain-association")
+        assert resp.status_code == 200
+        assert resp.text == "APPLE_PAY_CONTENT_12345"
+        assert "text/plain" in resp.headers["content-type"]
+    finally:
+        _state._access_config.pop("applepay_domain_association", None)
 
 
 # ---------------------------------------------------------------------------
@@ -129,6 +158,35 @@ async def test_start_returns_card_form(unit_client: AsyncClient, mock_mqtt: Magi
     assert "text/html" in resp.headers["content-type"]
     # Card form must reference the Square SDK
     assert "square" in resp.text.lower()
+
+
+async def test_start_page_has_apple_pay_button(unit_client: AsyncClient, mock_mqtt: MagicMock) -> None:
+    """Start page must include the Apple Pay button element and container."""
+    asyncio.create_task(
+        push_after(state._topic_queues[BOOKING_RESPONSE_TOPIC], make_booking_response())
+    )
+    resp = await unit_client.get("/start")
+    assert resp.status_code == 200
+    assert 'id="apple-pay-button"' in resp.text
+    assert 'id="apple-pay-container"' in resp.text
+
+
+async def test_start_page_payment_config_includes_amount_cents(
+    unit_client: AsyncClient, mock_mqtt: MagicMock
+) -> None:
+    """PAYMENT_CONFIG on the start page must include amountCents and currencyCode."""
+    asyncio.create_task(
+        push_after(
+            state._topic_queues[BOOKING_RESPONSE_TOPIC],
+            make_booking_response(amount_dollars=1.00),
+        )
+    )
+    resp = await unit_client.get("/start")
+    assert resp.status_code == 200
+    assert "amountCents" in resp.text
+    assert "currencyCode" in resp.text
+    # 100 cents for $1.00
+    assert "100" in resp.text
 
 
 async def test_start_publishes_to_correct_topic(
@@ -523,24 +581,19 @@ async def test_db_route_removed_returns_404(unit_client: AsyncClient) -> None:
 
 
 # ---------------------------------------------------------------------------
-# /admin redirect
+# /admin routes are NOT on the public guest app (admin-only server, port 8091)
 # ---------------------------------------------------------------------------
 
-async def test_admin_redirect_returns_302(unit_client: AsyncClient) -> None:
-    """GET /admin on guest server returns 302 to the HTTPS admin endpoint."""
+async def test_admin_route_not_on_public_app(unit_client: AsyncClient) -> None:
+    """GET /admin on guest server returns 404 — admin is on a separate server."""
     resp = await unit_client.get("/admin", follow_redirects=False)
-    assert resp.status_code == 302
-    location = resp.headers.get("location", "")
-    assert location.startswith("https://")
-    assert "/admin/" in location
+    assert resp.status_code == 404
 
 
-async def test_admin_path_redirect_preserves_path(unit_client: AsyncClient) -> None:
-    """GET /admin/sessions on guest server redirects with path preserved."""
+async def test_admin_sub_route_not_on_public_app(unit_client: AsyncClient) -> None:
+    """GET /admin/sessions on guest server returns 404 — admin is on a separate server."""
     resp = await unit_client.get("/admin/sessions", follow_redirects=False)
-    assert resp.status_code == 302
-    location = resp.headers.get("location", "")
-    assert "sessions" in location
+    assert resp.status_code == 404
 
 
 # ---------------------------------------------------------------------------
@@ -551,3 +604,41 @@ async def test_debug_returns_html(unit_client: AsyncClient) -> None:
     resp = await unit_client.get("/debug")
     assert resp.status_code == 200
     assert "text/html" in resp.headers["content-type"]
+
+
+# ---------------------------------------------------------------------------
+# Static files – public app
+# ---------------------------------------------------------------------------
+
+_STATIC_FILES = [
+    "/static/css/portal.css",
+    "/static/js/payment.js",
+    "/static/images/Extravio%20EV%20Management.webp",
+    "/static/images/Square_Logo_2025_White.svg",
+]
+
+
+@pytest.mark.parametrize("path", _STATIC_FILES)
+async def test_static_file_returns_200(unit_client: AsyncClient, path: str) -> None:
+    """Every known static asset must be served without error on the public app."""
+    resp = await unit_client.get(path)
+    assert resp.status_code == 200, f"Static file {path} returned {resp.status_code}"
+
+
+async def test_start_page_static_refs_all_load(
+    unit_client: AsyncClient, mock_mqtt: MagicMock
+) -> None:
+    """Parse the rendered /start page and verify every /static/ reference loads."""
+    import re
+    asyncio.create_task(
+        push_after(state._topic_queues[BOOKING_RESPONSE_TOPIC], make_booking_response())
+    )
+    page = await unit_client.get("/start")
+    assert page.status_code == 200
+
+    refs = re.findall(r'(?:src|href)="(/static/[^"]+)"', page.text)
+    assert refs, "No /static/ references found on /start page"
+
+    for ref in set(refs):
+        r = await unit_client.get(ref)
+        assert r.status_code == 200, f"/start references {ref!r} but got {r.status_code}"

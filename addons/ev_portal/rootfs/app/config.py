@@ -94,6 +94,16 @@ def load_config() -> Dict[str, Any]:
 
     home_id    = (opts.get("home_id")    or "").strip()
     charger_id = (opts.get("charger_id") or "").strip()
+    default_charger_id = (opts.get("default_charger_id") or "").strip()
+
+    # Apple Pay domain association file (not logged – may contain sensitive data)
+    applepay_domain_association: str = opts.get("applepay_domain_association") or ""
+
+    # Access control: list of allowed CIDRs (LAN + Tailscale)
+    raw_cidrs = opts.get("access_allow_cidrs") or []
+    if isinstance(raw_cidrs, str):
+        raw_cidrs = [c.strip() for c in raw_cidrs.split(",") if c.strip()]
+    access_allow_cidrs: list = [str(c).strip() for c in raw_cidrs if str(c).strip()]
 
     # ── Startup log (no secrets) ────────────────────────────────────────────
     log.info(
@@ -152,8 +162,14 @@ def load_config() -> Dict[str, Any]:
             "charge_cents": charge_cents,
         },
         "app": {
-            "home_id":    home_id,
-            "charger_id": charger_id,
+            "home_id":            home_id,
+            "charger_id":         charger_id,
+            "default_charger_id": default_charger_id,
+        },
+        "access": {
+            "allow_cidrs":                  access_allow_cidrs,
+            "default_charger_id":           default_charger_id,
+            "applepay_domain_association":  applepay_domain_association,
         },
         "admin": {
             "enabled":        admin_enabled,

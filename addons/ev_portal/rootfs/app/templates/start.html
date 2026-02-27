@@ -71,6 +71,11 @@
     </div>
   </div>
 
+  <div id="apple-pay-container">
+    <button id="apple-pay-button" type="button" aria-label="Pay with Apple Pay"></button>
+    <div class="pay-divider"><span>or pay by card</span></div>
+  </div>
+
   <div id="card-container"></div>
   <button id="card-button" type="button">Authorize &amp; Start Charging</button>
   <div id="payment-status"></div>
@@ -88,10 +93,12 @@
 
   <script>
     window.PAYMENT_CONFIG = {
-      appId:      {{ app_id      | tojson }},
-      locationId: {{ location_id | tojson }},
-      sessionUid: {{ session_uid | tojson }},
-      submitUrl:  {{ submit_url  | tojson }}
+      appId:        {{ app_id       | tojson }},
+      locationId:   {{ location_id  | tojson }},
+      sessionUid:   {{ session_uid  | tojson }},
+      submitUrl:    {{ submit_url   | tojson }},
+      amountCents:  {{ amount_cents | tojson }},
+      currencyCode: 'USD'
     };
   </script>
   <script src="/static/js/payment.js"></script>

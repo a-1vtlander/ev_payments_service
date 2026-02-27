@@ -4,9 +4,10 @@ serve.py – Launch guest (HTTP:8090) and admin (HTTPS:8091) uvicorn servers.
 This is the production and local-dev entry point:
   python serve.py
 
-The guest FastAPI app (main:app) runs on HTTPS port 8090 and handles the
-anonymous charger portal.  The admin FastAPI app (admin.app:admin_app) runs
-on HTTPS port 8091, protected by HTTP Basic Auth.
+The guest FastAPI app (main:app) runs on plain HTTP port 8090.  TLS is
+terminated upstream by Cloudflare Tunnel (or a reverse proxy), so no cert
+is needed here.  The admin FastAPI app (admin.app:admin_app) runs on HTTPS
+port 8091, protected by session-cookie / Basic Auth.
 
 Both servers share runtime state via state.py; the guest app's lifespan
 initialises MQTT, Square, and the DB.
@@ -20,7 +21,7 @@ import uvicorn
 
 import state
 from config import load_config
-from tls import ensure_cert, ensure_guest_cert
+from tls import ensure_cert
 
 logging.basicConfig(
     level=logging.INFO,
@@ -40,21 +41,11 @@ async def _serve_all() -> None:
 
     admin_cfg = cfg["admin"]
 
-    # ── Guest server (HTTPS) ──────────────────────────────────────────────
-    # HTTPS is required so browsers grant a secure context, which Square's
-    # Web Payments SDK mandates.  Authentication is NOT required on this server.
-    try:
-        guest_cert_path, guest_key_path = ensure_guest_cert()
-    except Exception as exc:
-        log.critical("TLS setup failed for guest server – cannot start: %s", exc)
-        raise
-
+    # ── Guest server (plain HTTP – TLS terminated by Cloudflare) ────────────
     guest_config = uvicorn.Config(
         "main:app",
         host="0.0.0.0",
         port=GUEST_PORT,
-        ssl_certfile=guest_cert_path,
-        ssl_keyfile=guest_key_path,
         log_level="info",
         access_log=True,
     )
@@ -86,7 +77,7 @@ async def _serve_all() -> None:
     else:
         log.info("Admin interface disabled (admin_enabled=false)")
 
-    log.info("Guest server starting on https://0.0.0.0:%s", GUEST_PORT)
+    log.info("Guest server starting on http://0.0.0.0:%s  (plain HTTP – TLS via Cloudflare)", GUEST_PORT)
 
     await asyncio.gather(*[s.serve() for s in servers])
 
