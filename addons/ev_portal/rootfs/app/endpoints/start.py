@@ -215,7 +215,7 @@ async def start_session(request: Request):
     # -- Render card form ---------------------------------------------------
     return render_card_form(
         request, session_uid, booking_id, amount_cents,
-        submit_url=str(request.base_url) + "submit_payment",
+        submit_url="/submit_payment",
         given_name_hint=given_name_hint,
         family_name_hint=family_name_hint,
         booking_is_active=booking_is_active,

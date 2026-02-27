@@ -12,7 +12,7 @@ Algorithm
    Else:
        effective_ip = remote_ip
 
-3. If effective_ip NOT within access_allow_cidrs → 403 text/plain "Access restricted"
+3. If effective_ip NOT within filter_access_to → 403 text/plain "Access restricted"
 4. Otherwise continue the request.
 
 Cloudflare egress CIDRs are hardcoded (source: https://www.cloudflare.com/ips/).
@@ -77,7 +77,18 @@ def _get_allow_nets() -> list:
     global _allow_nets_cache
     if _allow_nets_cache is None:
         cidrs = state._access_config.get("allow_cidrs", [])
-        _allow_nets_cache = [ipaddress.ip_network(c, strict=False) for c in cidrs]
+        parsed: list = []
+        for c in cidrs:
+            try:
+                parsed.append(ipaddress.ip_network(c, strict=False))
+            except ValueError as exc:
+                log.error("filter_access_to: invalid CIDR %r — skipped (%s)", c, exc)
+        _allow_nets_cache = parsed
+        if parsed:
+            log.info("AccessControlMiddleware: allow-list active — %d CIDR(s): %s",
+                     len(parsed), ", ".join(str(n) for n in parsed))
+        else:
+            log.info("AccessControlMiddleware: filter_access_to not set — all IPs allowed")
     return _allow_nets_cache
 
 
@@ -95,9 +106,9 @@ def _addr_in(ip_str: str, nets: list) -> bool:
 
 class AccessControlMiddleware(BaseHTTPMiddleware):
     """
-    Block requests whose effective IP is not in access_allow_cidrs.
+    Block requests whose effective IP is not in filter_access_to.
 
-    When allow_cidrs is empty (not configured) the middleware is a no-op,
+    When filter_access_to is empty (not configured) the middleware is a no-op,
     which keeps tests and local-dev environments working without any config.
     """
 
@@ -114,11 +125,20 @@ class AccessControlMiddleware(BaseHTTPMiddleware):
             # Request arrived via Cloudflare — trust CF-Connecting-IP for real IP.
             effective_ip = request.headers.get("cf-connecting-ip", "").strip()
             if not effective_ip:
+                log.warning(
+                    "403 access denied: request from Cloudflare IP %s has no "
+                    "CF-Connecting-IP header — %s %s",
+                    remote_ip, request.method, request.url.path,
+                )
                 return _DENY
         else:
             effective_ip = remote_ip
 
         if not _addr_in(effective_ip, allow_nets):
+            log.warning(
+                "403 access denied: %s not in filter_access_to — %s %s",
+                effective_ip, request.method, request.url.path,
+            )
             return _DENY
 
         return await call_next(request)

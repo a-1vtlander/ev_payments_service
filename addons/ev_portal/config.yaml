@@ -1,9 +1,9 @@
 name: "EV Charger Portal"
 description: "Payment Manager AddOn for EV Sessions - Uses LAN-local HTTPS portal via MQTT with an HTTPS admin server"
-version: "1.1.1"
+version: "1.1.3"
 slug: "ev_portal"
 init: false
-webui: https://[HOST]:[PORT:8090]/
+webui: https://[HOST]:[PORT:8091]/admin
 maintainer: 1VTLander
 url: "https://github.com/a-1vtlander/ev_payments_service"
 documentation: "https://github.com/a-1vtlander/ev_payments_service/blob/main/addons/ev_portal/README.md"
@@ -30,9 +30,7 @@ options:
   charger_id: ""
   default_charger_id: ""
   applepay_domain_association: ""
-  access_allow_cidrs:
-    - "192.168.4.0/22"
-    - "100.64.0.0/10"
+  filter_access_to: []
   square_sandbox: true
   square_sandbox_app_id: ""
   square_sandbox_access_token: ""
@@ -57,7 +55,7 @@ schema:
   charger_id: str
   default_charger_id: str
   applepay_domain_association: str
-  access_allow_cidrs:
+  filter_access_to:
     - str
   square_sandbox: bool
   square_sandbox_app_id: str

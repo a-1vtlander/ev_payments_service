@@ -120,7 +120,9 @@ h1 {
 .name-row input:focus { outline: none; border-color: #006aff; }
 
 /* ── Apple Pay ───────────────────────────────────────────────────────────── */
-#apple-pay-container { margin-bottom: .5rem; }
+/* Hidden by default – payment.js reveals it only after payments.applePay()   */
+/* resolves successfully. Prevents flash-then-vanish when unavailable.        */
+#apple-pay-container { margin-bottom: .5rem; display: none; }
 
 /* Square renders the native Apple Pay button inside this div automatically */
 #apple-pay-button {

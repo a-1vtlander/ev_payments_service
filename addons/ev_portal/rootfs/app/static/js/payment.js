@@ -112,6 +112,9 @@
     // Will throw if Apple Pay is unavailable (non-Safari, no enrolled card, HTTP).
     const applePay = await payments.applePay(paymentRequest);
 
+    // Only reveal the button now that we know Apple Pay is available.
+    applePayContainer.style.display = '';
+
     applePayBtn.addEventListener('click', async () => {
       status.textContent = 'Opening Apple Pay…';
 
@@ -146,8 +149,7 @@
     });
 
   } catch (_) {
-    // Apple Pay unavailable — hide gracefully.
-    if (applePayContainer) applePayContainer.style.display = 'none';
+    // Apple Pay unavailable — container stays hidden (display:none set in CSS).
   }
 
   // ── Card form ───────────────────────────────────────────────────────────

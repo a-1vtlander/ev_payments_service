@@ -100,8 +100,8 @@ def load_config() -> Dict[str, Any]:
     # (not logged – content is opaque binary-as-text from Square)
     applepay_domain_association: str = opts.get("applepay_domain_association") or ""
 
-    # Access control: list of allowed CIDRs (LAN + Tailscale)
-    raw_cidrs = opts.get("access_allow_cidrs") or []
+    # Access control: list of allowed CIDRs.  When empty / absent → no filtering.
+    raw_cidrs = opts.get("filter_access_to") or []
     if isinstance(raw_cidrs, str):
         raw_cidrs = [c.strip() for c in raw_cidrs.split(",") if c.strip()]
     access_allow_cidrs: list = [str(c).strip() for c in raw_cidrs if str(c).strip()]
