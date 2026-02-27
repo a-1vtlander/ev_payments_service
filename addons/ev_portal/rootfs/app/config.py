@@ -96,7 +96,8 @@ def load_config() -> Dict[str, Any]:
     charger_id = (opts.get("charger_id") or "").strip()
     default_charger_id = (opts.get("default_charger_id") or "").strip()
 
-    # Apple Pay domain association file (not logged – may contain sensitive data)
+    # Apple Pay domain association file content – preserved exactly, not stripped
+    # (not logged – content is opaque binary-as-text from Square)
     applepay_domain_association: str = opts.get("applepay_domain_association") or ""
 
     # Access control: list of allowed CIDRs (LAN + Tailscale)

@@ -1,6 +1,6 @@
 name: "EV Charger Portal"
 description: "Payment Manager AddOn for EV Sessions - Uses LAN-local HTTPS portal via MQTT with an HTTPS admin server"
-version: "1.0.7"
+version: "1.1.0"
 slug: "ev_portal"
 init: false
 webui: https://[HOST]:[PORT:8090]/

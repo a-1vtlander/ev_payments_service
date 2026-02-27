@@ -23,7 +23,7 @@ import logging
 from pathlib import Path
 
 from fastapi import FastAPI, Request
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from access import AccessControlMiddleware
@@ -74,14 +74,19 @@ async def root_redirect(request: Request):
 )
 async def apple_pay_domain_verification():
     """
-    Serve Apple Pay domain association file as text/plain.
+    Serve Apple Pay domain association file verbatim.
     Returns 404 if applepay_domain_association is not configured.
-    Content is returned exactly as configured – no trimming, no extra newlines.
+    Uses plain Response (not HTMLResponse) to avoid any HTML-encoding of content.
     """
     content = state._access_config.get("applepay_domain_association", "")
     if not content:
-        return HTMLResponse(content="Not configured", status_code=404, media_type="text/plain")
-    return HTMLResponse(content=content, status_code=200, media_type="text/plain")
+        return Response(content="Not configured", status_code=404, media_type="text/plain")
+    # Encode to bytes explicitly – avoids any str/encoding ambiguity in Starlette
+    return Response(
+        content=content.encode("utf-8"),
+        status_code=200,
+        media_type="text/plain; charset=utf-8",
+    )
 
 
 # ── /enable-ev-session alias ───────────────────────────────────────────────
