@@ -213,9 +213,17 @@ def _upsert_session_sync(session: dict) -> None:
         f"INSERT INTO sessions ({', '.join(cols)}) VALUES ({placeholders})"
         f" ON CONFLICT(idempotency_key) DO UPDATE SET {update_pairs}"
     )
-    with _connect() as conn:
-        conn.execute(sql, list(row.values()))
-        conn.commit()
+    log.info(
+        "upsert_session key=%r  state=%s  booking_id=%r",
+        row.get("idempotency_key"), row.get("state"), row.get("booking_id"),
+    )
+    try:
+        with _connect() as conn:
+            conn.execute(sql, list(row.values()))
+            conn.commit()
+    except Exception:
+        log.exception("upsert_session: DB write failed for key=%r", row.get("idempotency_key"))
+        raise
 
 
 async def upsert_session(session: dict) -> None:
@@ -240,13 +248,22 @@ def _mark_authorized_sync(
     }
     set_clause = ", ".join(f"{k} = ?" for k in fields)
     values = [*fields.values(), idempotency_key]
-    with _connect() as conn:
-        cur = conn.execute(
-            f"UPDATE sessions SET {set_clause} WHERE idempotency_key = ?",
-            values,
-        )
-        conn.commit()
-    log.info("mark_authorized key=%r  rows_updated=%d", idempotency_key, cur.rowcount)
+    log.info(
+        "mark_authorized key=%r  payment_id=%r  amount_cents=%d  card_id=%r",
+        idempotency_key, square_payment_id, authorized_amount_cents,
+        card_meta.get("square_card_id"),
+    )
+    try:
+        with _connect() as conn:
+            cur = conn.execute(
+                f"UPDATE sessions SET {set_clause} WHERE idempotency_key = ?",
+                values,
+            )
+            conn.commit()
+        log.info("mark_authorized: DB updated key=%r  rows_updated=%d", idempotency_key, cur.rowcount)
+    except Exception:
+        log.exception("mark_authorized: DB write failed for key=%r", idempotency_key)
+        raise
 
 
 async def mark_authorized(
@@ -266,13 +283,19 @@ async def mark_authorized(
 
 
 def _mark_failed_sync(idempotency_key: str, error: str) -> None:
-    with _connect() as conn:
-        conn.execute(
-            "UPDATE sessions SET state = 'FAILED', last_error = ?, updated_at = ?"
-            " WHERE idempotency_key = ?",
-            (error, _now(), idempotency_key),
-        )
-        conn.commit()
+    log.error("mark_failed key=%r  error=%r", idempotency_key, error)
+    try:
+        with _connect() as conn:
+            cur = conn.execute(
+                "UPDATE sessions SET state = 'FAILED', last_error = ?, updated_at = ?"
+                " WHERE idempotency_key = ?",
+                (error, _now(), idempotency_key),
+            )
+            conn.commit()
+        log.info("mark_failed: DB updated key=%r  rows_updated=%d", idempotency_key, cur.rowcount)
+    except Exception:
+        log.exception("mark_failed: DB write failed for key=%r", idempotency_key)
+        raise
 
 
 async def mark_failed(idempotency_key: str, error: str) -> None:
@@ -285,17 +308,26 @@ def _mark_captured_sync(
     square_capture_payment_id: str,
     captured_amount_cents: int,
 ) -> None:
-    with _connect() as conn:
-        conn.execute(
-            """UPDATE sessions
-               SET state = 'CAPTURED',
-                   square_capture_payment_id = ?,
-                   captured_amount_cents = ?,
-                   updated_at = ?
-               WHERE idempotency_key = ?""",
-            (square_capture_payment_id, captured_amount_cents, _now(), idempotency_key),
-        )
-        conn.commit()
+    log.info(
+        "mark_captured key=%r  capture_payment_id=%r  amount_cents=%d",
+        idempotency_key, square_capture_payment_id, captured_amount_cents,
+    )
+    try:
+        with _connect() as conn:
+            cur = conn.execute(
+                """UPDATE sessions
+                   SET state = 'CAPTURED',
+                       square_capture_payment_id = ?,
+                       captured_amount_cents = ?,
+                       updated_at = ?
+                   WHERE idempotency_key = ?""",
+                (square_capture_payment_id, captured_amount_cents, _now(), idempotency_key),
+            )
+            conn.commit()
+        log.info("mark_captured: DB updated key=%r  rows_updated=%d", idempotency_key, cur.rowcount)
+    except Exception:
+        log.exception("mark_captured: DB write failed for key=%r", idempotency_key)
+        raise
 
 
 async def mark_captured(
@@ -313,17 +345,23 @@ async def mark_captured(
 
 
 def _mark_voided_sync(idempotency_key: str, square_payment_id: str) -> None:
-    with _connect() as conn:
-        conn.execute(
-            """UPDATE sessions
-               SET state = 'VOIDED',
-                   captured_amount_cents = 0,
-                   square_capture_payment_id = ?,
-                   updated_at = ?
-               WHERE idempotency_key = ?""",
-            (square_payment_id, _now(), idempotency_key),
-        )
-        conn.commit()
+    log.info("mark_voided key=%r  payment_id=%r", idempotency_key, square_payment_id)
+    try:
+        with _connect() as conn:
+            cur = conn.execute(
+                """UPDATE sessions
+                   SET state = 'VOIDED',
+                       captured_amount_cents = 0,
+                       square_capture_payment_id = ?,
+                       updated_at = ?
+                   WHERE idempotency_key = ?""",
+                (square_payment_id, _now(), idempotency_key),
+            )
+            conn.commit()
+        log.info("mark_voided: DB updated key=%r  rows_updated=%d", idempotency_key, cur.rowcount)
+    except Exception:
+        log.exception("mark_voided: DB write failed for key=%r", idempotency_key)
+        raise
 
 
 async def mark_voided(idempotency_key: str, square_payment_id: str) -> None:
@@ -400,17 +438,23 @@ async def soft_delete(idempotency_key: str) -> None:
 
 
 def _mark_canceled_sync(idempotency_key: str, square_payment_id: str) -> None:
-    with _connect() as conn:
-        conn.execute(
-            """UPDATE sessions
-               SET state = 'CANCELED',
-                   square_capture_payment_id = ?,
-                   captured_amount_cents = 0,
-                   updated_at = ?
-               WHERE idempotency_key = ?""",
-            (square_payment_id, _now(), idempotency_key),
-        )
-        conn.commit()
+    log.info("mark_canceled key=%r  payment_id=%r", idempotency_key, square_payment_id)
+    try:
+        with _connect() as conn:
+            cur = conn.execute(
+                """UPDATE sessions
+                   SET state = 'CANCELED',
+                       square_capture_payment_id = ?,
+                       captured_amount_cents = 0,
+                       updated_at = ?
+                   WHERE idempotency_key = ?""",
+                (square_payment_id, _now(), idempotency_key),
+            )
+            conn.commit()
+        log.info("mark_canceled: DB updated key=%r  rows_updated=%d", idempotency_key, cur.rowcount)
+    except Exception:
+        log.exception("mark_canceled: DB write failed for key=%r", idempotency_key)
+        raise
 
 
 async def mark_canceled(idempotency_key: str, square_payment_id: str) -> None:
@@ -421,17 +465,23 @@ async def mark_canceled(idempotency_key: str, square_payment_id: str) -> None:
 def _mark_refunded_sync(
     idempotency_key: str, refund_id: str, amount_cents: int
 ) -> None:
-    with _connect() as conn:
-        conn.execute(
-            """UPDATE sessions
-               SET state = 'REFUNDED',
-                   square_capture_payment_id = ?,
-                   captured_amount_cents = ?,
-                   updated_at = ?
-               WHERE idempotency_key = ?""",
-            (refund_id, amount_cents, _now(), idempotency_key),
-        )
-        conn.commit()
+    log.info("mark_refunded key=%r  refund_id=%r  amount_cents=%d", idempotency_key, refund_id, amount_cents)
+    try:
+        with _connect() as conn:
+            cur = conn.execute(
+                """UPDATE sessions
+                   SET state = 'REFUNDED',
+                       square_capture_payment_id = ?,
+                       captured_amount_cents = ?,
+                       updated_at = ?
+                   WHERE idempotency_key = ?""",
+                (refund_id, amount_cents, _now(), idempotency_key),
+            )
+            conn.commit()
+        log.info("mark_refunded: DB updated key=%r  rows_updated=%d", idempotency_key, cur.rowcount)
+    except Exception:
+        log.exception("mark_refunded: DB write failed for key=%r", idempotency_key)
+        raise
 
 
 async def mark_refunded(

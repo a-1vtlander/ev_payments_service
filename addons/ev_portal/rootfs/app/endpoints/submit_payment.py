@@ -55,8 +55,8 @@ async def submit_payment(
 async def _submit_payment_impl(source_id, uid, given_name, family_name, payment_method="CARD"):
     is_wallet = payment_method in _DIGITAL_WALLET_METHODS
     log.info(
-        "submit_payment: uid=%r given_name=%r family_name=%r payment_method=%r",
-        uid, given_name, family_name, payment_method,
+        "submit_payment: uid=%r given_name=%r family_name=%r payment_method=%r  source_id_prefix=%r",
+        uid, given_name, family_name, payment_method, source_id[:8] if source_id else None,
     )
 
     # 1. Validate session UID; fall back to DB to recover sessions after restart
@@ -80,7 +80,10 @@ async def _submit_payment_impl(source_id, uid, given_name, family_name, payment_
     amount_cents    = session["amount_cents"]
     charger_id      = state._app_config.get("charger_id", "")
     idempotency_key = f"ev:{charger_id}:{booking_id}"
-    log.info("booking_id=%s amount_cents=%s idempotency_key=%s", booking_id, amount_cents, idempotency_key)
+    log.info(
+        "booking_id=%s  amount_cents=%s  idempotency_key=%s  is_wallet=%s",
+        booking_id, amount_cents, idempotency_key, is_wallet,
+    )
 
     # Idempotency: return existing result without re-calling Square
     existing = await db.get_session(idempotency_key)
@@ -120,7 +123,7 @@ async def _submit_payment_impl(source_id, uid, given_name, family_name, payment_
             )
         except Exception as exc:
             err_msg = _parse_square_error(exc)
-            log.error("Square wallet payment error: %s", exc)
+            log.exception("Square wallet payment error for booking_id=%r: %s", booking_id, exc)
             await db.mark_failed(idempotency_key, err_msg)
             return JSONResponse({"status": "card_error", "message": err_msg})
 
@@ -143,7 +146,7 @@ async def _submit_payment_impl(source_id, uid, given_name, family_name, payment_
             )
         except Exception as exc:
             err_msg = _parse_square_error(exc)
-            log.error("Square create_card error: %s", exc)
+            log.exception("Square create_card error for booking_id=%r: %s", booking_id, exc)
             await db.mark_failed(idempotency_key, err_msg)
             return JSONResponse({"status": "card_error", "message": err_msg})
 
@@ -155,7 +158,7 @@ async def _submit_payment_impl(source_id, uid, given_name, family_name, payment_
             )
         except Exception as exc:
             err_msg = _parse_square_error(exc)
-            log.error("Square create_payment_authorization error: %s", exc)
+            log.exception("Square create_payment_authorization error for booking_id=%r: %s", booking_id, exc)
             await db.mark_failed(idempotency_key, err_msg)
             return JSONResponse({"status": "card_error", "message": err_msg})
 

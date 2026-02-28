@@ -62,13 +62,29 @@ async def _handle_finalize(payload_str: str) -> None:
         final_amount_cents,
     )
 
-    row = await db.get_session_by_booking_id(booking_id)
+    try:
+        row = await db.get_session_by_booking_id(booking_id)
+    except Exception:
+        log.exception("finalize_session: DB lookup failed for booking_id=%r", booking_id)
+        return
+
     if row is None:
         log.warning("finalize_session: no session found for booking_id=%r — ignoring", booking_id)
         return
 
     idempotency_key: str = row["idempotency_key"]
     current_state: str = row.get("state", "")
+
+    log.info(
+        "finalize_session: row found — key=%r  state=%r  payment_id=%r  "
+        "authorized_cents=%d  card_id=%r  customer_id=%r",
+        idempotency_key,
+        current_state,
+        row.get("square_payment_id"),
+        row.get("authorized_amount_cents") or 0,
+        row.get("square_card_id"),
+        row.get("square_customer_id"),
+    )
 
     if current_state in ("CAPTURED", "VOIDED"):
         log.info(
@@ -87,8 +103,12 @@ async def _handle_finalize(payload_str: str) -> None:
     square_payment_id: Optional[str] = row.get("square_payment_id")
     if not square_payment_id:
         log.error(
-            "finalize_session: session %r has no square_payment_id — cannot capture",
+            "finalize_session: session %r has no square_payment_id — cannot capture; "
+            "full row state=%r  card_id=%r  booking_id=%r",
             idempotency_key,
+            current_state,
+            row.get("square_card_id"),
+            booking_id,
         )
         await db.mark_failed(idempotency_key, "missing square_payment_id for capture")
         return
@@ -159,11 +179,16 @@ async def _handle_finalize(payload_str: str) -> None:
         # ── Step B: direct charge for final amount ─────────────────────────
         square_card_id     = row.get("square_card_id")
         square_customer_id = row.get("square_customer_id")
+        log.info(
+            "finalize_session: direct-charge prerequisites — card_id=%r  customer_id=%r  "
+            "booking_id=%r  final_amount_cents=%d",
+            square_card_id, square_customer_id, booking_id, final_amount_cents,
+        )
         if not square_card_id or not square_customer_id:
             log.error(
-                "finalize_session: missing card/customer for direct charge: "
-                "card=%r customer=%r",
-                square_card_id, square_customer_id,
+                "finalize_session: CANNOT direct-charge — missing card_id or customer_id: "
+                "card=%r  customer=%r  key=%r  (Apple Pay / wallet sessions cannot be recharged)",
+                square_card_id, square_customer_id, idempotency_key,
             )
             await db.mark_failed(
                 idempotency_key,

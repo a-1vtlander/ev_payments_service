@@ -44,13 +44,25 @@ def _headers() -> dict:
 
 async def fetch_first_location_id() -> str:
     """Fetch the first ACTIVE location from the Square account."""
-    async with httpx.AsyncClient(timeout=10.0) as client:
-        resp = await client.get(f"{_base_url()}/v2/locations", headers=_headers())
+    url = f"{_base_url()}/v2/locations"
+    log.info("GET %s", url)
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.get(url, headers=_headers())
+        log.info("GET %s → HTTP %s  body=%s", url, resp.status_code, resp.text)
         resp.raise_for_status()
-        locations = resp.json().get("locations", [])
+    except httpx.HTTPStatusError as exc:
+        log.error("fetch_first_location_id: HTTP %s from Square: %s", exc.response.status_code, exc.response.text)
+        raise
+    except Exception:
+        log.exception("fetch_first_location_id: unexpected error calling Square")
+        raise
+    locations = resp.json().get("locations", [])
     active = [loc for loc in locations if loc.get("status") == "ACTIVE"]
     if not active:
+        log.error("fetch_first_location_id: no ACTIVE locations in response: %s", resp.text)
         raise RuntimeError("No active Square locations found")
+    log.info("fetch_first_location_id: using location_id=%s", active[0]["id"])
     return active[0]["id"]
 
 
@@ -84,12 +96,16 @@ async def create_customer(booking_id: str, given_name: str, family_name: str) ->
         url, resp.status_code, resp.text,
     )
     if not resp.is_success:
+        log.error(
+            "create_customer: Square error HTTP %s for booking_id=%r — %s",
+            resp.status_code, booking_id, resp.text,
+        )
         raise RuntimeError(
             f"Square /v2/customers error {resp.status_code}: {resp.text}"
         )
     data = resp.json()
     customer_id = data["customer"]["id"]
-    log.info("Square customer created: customer_id=%s", customer_id)
+    log.info("Square customer created: customer_id=%s  booking_id=%r", customer_id, booking_id)
     return customer_id
 
 
@@ -127,6 +143,10 @@ async def create_card(
         url, resp.status_code, resp.text,
     )
     if not resp.is_success:
+        log.error(
+            "create_card: Square error HTTP %s for booking_id=%r  source_id=%r — %s",
+            resp.status_code, booking_id, source_id, resp.text,
+        )
         raise RuntimeError(
             f"Square /v2/cards error {resp.status_code}: {resp.text}"
         )
@@ -194,6 +214,11 @@ async def create_payment_authorization(
         url, resp.status_code, resp.text,
     )
     if not resp.is_success:
+        log.error(
+            "create_payment_authorization: Square error HTTP %s for booking_id=%r "
+            "source_id=%r  amount_cents=%d  customer_id=%r — %s",
+            resp.status_code, booking_id, source_id, amount_cents, customer_id, resp.text,
+        )
         raise RuntimeError(
             f"Square /v2/payments error {resp.status_code}: {resp.text}"
         )
@@ -234,6 +259,11 @@ async def capture_payment(payment_id: str, final_amount_cents: int) -> dict:
         update_url, update_resp.status_code, update_resp.text,
     )
     if not update_resp.is_success:
+        log.error(
+            "capture_payment: Square PUT error HTTP %s for payment_id=%r "
+            "final_amount_cents=%d — %s",
+            update_resp.status_code, payment_id, final_amount_cents, update_resp.text,
+        )
         raise RuntimeError(
             f"Square PUT /v2/payments/{payment_id} error "
             f"{update_resp.status_code}: {update_resp.text}"
@@ -250,6 +280,10 @@ async def capture_payment(payment_id: str, final_amount_cents: int) -> dict:
         complete_url, complete_resp.status_code, complete_resp.text,
     )
     if not complete_resp.is_success:
+        log.error(
+            "capture_payment: Square complete error HTTP %s for payment_id=%r — %s",
+            complete_resp.status_code, payment_id, complete_resp.text,
+        )
         raise RuntimeError(
             f"Square /v2/payments/{payment_id}/complete error "
             f"{complete_resp.status_code}: {complete_resp.text}"
@@ -273,6 +307,10 @@ async def cancel_payment(payment_id: str) -> dict:
         url, resp.status_code, resp.text,
     )
     if not resp.is_success:
+        log.error(
+            "cancel_payment: Square error HTTP %s for payment_id=%r — %s",
+            resp.status_code, payment_id, resp.text,
+        )
         raise RuntimeError(
             f"Square /v2/payments/{payment_id}/cancel error "
             f"{resp.status_code}: {resp.text}"
@@ -327,6 +365,11 @@ async def charge_card_payment(
         url, resp.status_code, resp.text,
     )
     if not resp.is_success:
+        log.error(
+            "charge_card_payment: Square error HTTP %s for booking_id=%r "
+            "card_id=%r  amount_cents=%d — %s",
+            resp.status_code, booking_id, card_id, amount_cents, resp.text,
+        )
         raise RuntimeError(
             f"Square /v2/payments (direct charge) error {resp.status_code}: {resp.text}"
         )
@@ -349,11 +392,20 @@ async def refund_payment(
     """
     if amount_cents is None:
         # Fetch the payment to get the captured amount.
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            pay_resp = await client.get(
-                f"{_base_url()}/v2/payments/{payment_id}", headers=_headers()
+        log.info("refund_payment: fetching payment %r to determine refund amount", payment_id)
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                pay_resp = await client.get(
+                    f"{_base_url()}/v2/payments/{payment_id}", headers=_headers()
+                )
+            log.info("GET /v2/payments/%s → HTTP %s", payment_id, pay_resp.status_code)
+            pay_resp.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            log.error(
+                "refund_payment: could not fetch payment %r — HTTP %s: %s",
+                payment_id, exc.response.status_code, exc.response.text,
             )
-        pay_resp.raise_for_status()
+            raise
         payment = pay_resp.json()["payment"]
         amount_cents = payment["amount_money"]["amount"]
 
@@ -375,6 +427,11 @@ async def refund_payment(
     log.info("POST %s -> HTTP %s\nResponse body:\n%s", url, resp.status_code, resp.text)
 
     if not resp.is_success:
+        log.error(
+            "refund_payment: Square error HTTP %s for payment_id=%r "
+            "amount_cents=%d — %s",
+            resp.status_code, payment_id, amount_cents, resp.text,
+        )
         raise RuntimeError(
             f"Square POST /v2/refunds error {resp.status_code}: {resp.text}"
         )
