@@ -33,6 +33,7 @@ import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 
+import access
 import db
 import state
 
@@ -53,6 +54,41 @@ FINALIZE_TOPIC           = f"ev/charger/{TEST_HOME_ID}/{TEST_CHARGER_ID}/booking
 # Real sandbox credentials (sandbox env) – read by sandbox / e2e tests only.
 SANDBOX_APP_ID    = "sandbox-sq0idb-d3YNYX4Uu3FOuC5nuWK1KA"
 SANDBOX_TOKEN     = "EAAAlwAYpAv5_iEXxRYaU5wUCaQLBhGq8MzvUU20QNACgjk2I0jAfJ00hip2dt-f"
+
+# ---------------------------------------------------------------------------
+# Session-level ephemeral DB guard
+# ---------------------------------------------------------------------------
+
+@pytest.fixture(scope="session", autouse=True)
+def _guard_ephemeral_db(tmp_path_factory):
+    """
+    Redirect db.DB_PATH to a temp directory for the entire test session.
+
+    This is a safety net on top of the per-test ``tmp_db`` fixture.  Even if a
+    test bypasses ``tmp_db`` it will still write to a throwaway location rather
+    than polluting the source tree or /data/ev_portal.db.
+
+    Yields the session-wide temp DB path so tests can inspect it if needed.
+    """
+    session_tmp = tmp_path_factory.mktemp("session_db")
+    session_db  = str(session_tmp / "ev_portal_session.db")
+    original    = db.DB_PATH
+    db.DB_PATH  = session_db
+    yield session_db
+    db.DB_PATH  = original
+
+    # Assert no stale .db files were left inside the tests source tree.
+    tests_dir = Path(__file__).parent
+    stale = [
+        p for p in tests_dir.rglob("*.db")
+        # Ignore anything already inside a pytest tmp dir (not under tests/)
+    ]
+    if stale:
+        raise AssertionError(
+            f"Test run left persistent .db files in the tests source tree:\n"
+            + "\n".join(f"  {p}" for p in stale)
+        )
+
 
 # ---------------------------------------------------------------------------
 # DB fixtures
@@ -97,7 +133,8 @@ class _StateSnapshot:
     """Save/restore all mutable state.* globals."""
     _ATTRS = (
         "mqtt_client", "_topic_queues", "_session_lock", "_app_config",
-        "_square_config", "_admin_config", "_booking_response_topic",
+        "_square_config", "_admin_config", "_access_config",
+        "_booking_response_topic",
         "_authorize_request_topic", "_authorize_response_topic",
         "_finalize_session_topic", "_pending_sessions", "_event_loop",
     )
@@ -108,6 +145,9 @@ class _StateSnapshot:
     def restore(self) -> None:
         for attr, val in self._saved.items():
             setattr(state, attr, val)
+        # Invalidate the access-control allow-list cache so the next test
+        # rebuilds it from the restored state._access_config.
+        access._allow_nets_cache = None
 
 
 def _build_queues() -> dict:
@@ -139,6 +179,7 @@ async def patched_state(mock_mqtt: MagicMock, tmp_db: str):
     state._app_config               = {"home_id": TEST_HOME_ID, "charger_id": TEST_CHARGER_ID}
     state._square_config            = _test_square_config()
     state._admin_config             = {"enabled": False, "username": "admin", "password": "test", "port_https": 8091}
+    state._access_config            = {"allow_cidrs": [], "default_charger_id": "", "applepay_domain_association": ""}
     state._booking_response_topic   = BOOKING_RESPONSE_TOPIC
     state._authorize_request_topic  = AUTHORIZE_REQUEST_TOPIC
     state._authorize_response_topic = AUTHORIZE_RESPONSE_TOPIC
@@ -175,6 +216,7 @@ async def unit_client_no_mqtt(disconnected_mqtt: MagicMock, tmp_db: str) -> Asyn
     state._session_lock             = asyncio.Lock()
     state._app_config               = {"home_id": TEST_HOME_ID, "charger_id": TEST_CHARGER_ID}
     state._square_config            = _test_square_config()
+    state._access_config            = {"allow_cidrs": [], "default_charger_id": "", "applepay_domain_association": ""}
     state._booking_response_topic   = BOOKING_RESPONSE_TOPIC
     state._authorize_request_topic  = AUTHORIZE_REQUEST_TOPIC
     state._authorize_response_topic = AUTHORIZE_RESPONSE_TOPIC

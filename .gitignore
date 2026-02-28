@@ -23,12 +23,20 @@ htmlcov/
 .coverage
 coverage.xml
 
+# SQLite databases (all locations – dev server writes these next to options.json)
+*.db
+*.db-wal
+*.db-shm
+
+# Accidentally-nested test directory (created when pytest is run from tests/)
+ev_portal/rootfs/app/tests/tests/
+
+# Generated dev TLS certificates (re-created automatically by serve.py)
+ev_portal/rootfs/app/tests/tls/
+
 # Secrets / local overrides
 # (dev_options.json contains real creds – keep out of git)
 ev_portal/rootfs/app/tests/dev_options.json
-
-# Local dev SQLite database
-ev_portal/rootfs/app/tests/ev_portal.db
 
 # VS Code
 .vscode/
