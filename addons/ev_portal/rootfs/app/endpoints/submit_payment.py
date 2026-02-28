@@ -26,15 +26,24 @@ def _parse_square_error(exc):
         return str(exc)
 
 
+# Digital wallet methods that arrive as one-time tokens – must NOT go via
+# POST /v2/cards.  The token is passed directly as source_id to /v2/payments.
+_DIGITAL_WALLET_METHODS = {"APPLE_PAY", "GOOGLE_PAY"}
+
+
 @router.post("/submit_payment")
 async def submit_payment(
     source_id: str = Form(...),
     uid: str = Form(...),
     given_name: str = Form(...),
     family_name: str = Form(...),
+    payment_method: str = Form(""),
 ):
     try:
-        return await _submit_payment_impl(source_id, uid, given_name, family_name)
+        return await _submit_payment_impl(
+            source_id, uid, given_name, family_name,
+            payment_method=payment_method.upper().strip(),
+        )
     except Exception as exc:
         log.exception("Unhandled error in submit_payment")
         return JSONResponse(
@@ -43,8 +52,12 @@ async def submit_payment(
         )
 
 
-async def _submit_payment_impl(source_id, uid, given_name, family_name):
-    log.info("submit_payment: uid=%r given_name=%r family_name=%r", uid, given_name, family_name)
+async def _submit_payment_impl(source_id, uid, given_name, family_name, payment_method="CARD"):
+    is_wallet = payment_method in _DIGITAL_WALLET_METHODS
+    log.info(
+        "submit_payment: uid=%r given_name=%r family_name=%r payment_method=%r",
+        uid, given_name, family_name, payment_method,
+    )
 
     # 1. Validate session UID; fall back to DB to recover sessions after restart
     session = state._pending_sessions.pop(uid, None)
@@ -95,33 +108,61 @@ async def _submit_payment_impl(source_id, uid, given_name, family_name):
         "square_environment":      "sandbox" if state._square_config.get("sandbox") else "production",
     })
 
-    # 2. Create Square customer + card on file
-    try:
-        card_id, customer_id, card_meta = await square.create_card(
-            source_id, booking_id, given_name, family_name
-        )
-    except Exception as exc:
-        err_msg = _parse_square_error(exc)
-        log.error("Square create_card error: %s", exc)
-        await db.mark_failed(idempotency_key, err_msg)
-        return JSONResponse({"status": "card_error", "message": err_msg})
+    # 2. Tokenise card / charge -- two paths depending on payment method.
+    if is_wallet:
+        # ── Digital wallet (Apple Pay, Google Pay) ─────────────────────────
+        # Wallet tokens are one-time-use and cannot be stored via POST /v2/cards.
+        # Pass the token directly as source_id to POST /v2/payments.
+        log.info("Digital wallet payment (%s): skipping card-on-file step", payment_method)
+        try:
+            payment = await square.create_payment_authorization(
+                source_id, None, booking_id, amount_cents
+            )
+        except Exception as exc:
+            err_msg = _parse_square_error(exc)
+            log.error("Square wallet payment error: %s", exc)
+            await db.mark_failed(idempotency_key, err_msg)
+            return JSONResponse({"status": "card_error", "message": err_msg})
 
-    log.info("Card created: booking_id=%s card_id=%s customer_id=%s", booking_id, card_id, customer_id)
+        # Extract card metadata from the payment response (no stored card/customer).
+        card_info = payment.get("card_details", {}).get("card", {})
+        card_meta = {
+            "square_customer_id": "",
+            "square_card_id":     "",
+            "card_brand":         card_info.get("card_brand", payment_method),
+            "card_last4":         card_info.get("last_4", ""),
+            "card_exp_month":     card_info.get("exp_month"),
+            "card_exp_year":      card_info.get("exp_year"),
+        }
+        card_id = ""
+    else:
+        # ── Card on file (standard card form) ──────────────────────────────
+        try:
+            card_id, customer_id, card_meta = await square.create_card(
+                source_id, booking_id, given_name, family_name
+            )
+        except Exception as exc:
+            err_msg = _parse_square_error(exc)
+            log.error("Square create_card error: %s", exc)
+            await db.mark_failed(idempotency_key, err_msg)
+            return JSONResponse({"status": "card_error", "message": err_msg})
 
-    # 3. Create pre-auth hold (autocomplete=False)
-    try:
-        payment = await square.create_payment_authorization(
-            card_id, customer_id, booking_id, amount_cents
-        )
-    except Exception as exc:
-        err_msg = _parse_square_error(exc)
-        log.error("Square create_payment_authorization error: %s", exc)
-        await db.mark_failed(idempotency_key, err_msg)
-        return JSONResponse({"status": "card_error", "message": err_msg})
+        log.info("Card created: booking_id=%s card_id=%s", booking_id, card_id)
+
+        try:
+            payment = await square.create_payment_authorization(
+                card_id, customer_id, booking_id, amount_cents
+            )
+        except Exception as exc:
+            err_msg = _parse_square_error(exc)
+            log.error("Square create_payment_authorization error: %s", exc)
+            await db.mark_failed(idempotency_key, err_msg)
+            return JSONResponse({"status": "card_error", "message": err_msg})
 
     payment_id     = payment["id"]
     payment_status = payment.get("status", "UNKNOWN")
-    log.info("Payment created: booking_id=%s payment_id=%s status=%s", booking_id, payment_id, payment_status)
+    log.info("Payment created: booking_id=%s payment_id=%s status=%s method=%s",
+             booking_id, payment_id, payment_status, payment_method)
 
     await db.mark_authorized(
         idempotency_key,

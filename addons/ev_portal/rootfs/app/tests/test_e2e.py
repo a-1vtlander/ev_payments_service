@@ -224,7 +224,7 @@ async def test_e2e_finalize_capture(live_client: AsyncClient) -> None:
         family_name="Capture",
     )
     payment = await square.create_payment_authorization(
-        card_id=card_id,
+        source_id=card_id,
         customer_id=customer_id,
         booking_id=booking_id,
         amount_cents=500,
@@ -272,7 +272,7 @@ async def test_e2e_finalize_void(live_client: AsyncClient) -> None:
         family_name="Void",
     )
     payment = await square.create_payment_authorization(
-        card_id=card_id,
+        source_id=card_id,
         customer_id=customer_id,
         booking_id=booking_id,
         amount_cents=300,

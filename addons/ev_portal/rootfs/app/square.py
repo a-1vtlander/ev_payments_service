@@ -146,12 +146,15 @@ async def create_card(
 
 
 async def create_payment_authorization(
-    card_id: str, customer_id: str, booking_id: str, amount_cents: int
+    source_id: str, customer_id: Optional[str], booking_id: str, amount_cents: int
 ) -> dict:
     """
     Create a pre-authorisation hold via POST /v2/payments (autocomplete=false).
 
-    ``customer_id`` is required by Square when the source_id is a stored card.
+    ``source_id`` is either a stored card ID (card-on-file flow) or a one-time
+    digital wallet token (Apple Pay / Google Pay).  ``customer_id`` is required
+    by Square for stored cards but must be omitted for wallet tokens.
+
     The payment is NOT captured immediately; the actual charge (or void/refund)
     happens after the session ends and the final energy usage is known.
 
@@ -161,8 +164,7 @@ async def create_payment_authorization(
     amount_dollars = amount_cents / 100
     body = {
         "idempotency_key": booking_id,   # idempotent – safe to retry same booking
-        "source_id":       card_id,
-        "customer_id":     customer_id,
+        "source_id":       source_id,
         "autocomplete":    False,
         "amount_money": {
             "amount":   amount_cents,
@@ -176,6 +178,9 @@ async def create_payment_authorization(
         ),
         "reference_id": booking_id[:40],
     }
+    # customer_id is required for stored cards, must be absent for wallet tokens.
+    if customer_id:
+        body["customer_id"] = customer_id
     log.info(
         "POST %s\nRequest body:\n%s",
         url, json.dumps(body, indent=2),

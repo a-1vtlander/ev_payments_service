@@ -134,7 +134,7 @@ async def test_create_payment_authorization_returns_pending_payment():
         family_name="Auth",
     )
     payment = await square.create_payment_authorization(
-        card_id=card_id,
+        source_id=card_id,
         customer_id=customer_id,
         booking_id=f"sandbox-preauth-test-{_RUN_ID}",
         amount_cents=100,
@@ -157,7 +157,7 @@ async def test_payment_authorization_is_not_auto_completed():
         family_name="NoComplete",
     )
     payment = await square.create_payment_authorization(
-        card_id=card_id,
+        source_id=card_id,
         customer_id=customer_id,
         booking_id=f"sandbox-no-autocomplete-{_RUN_ID}",
         amount_cents=50,
@@ -178,7 +178,7 @@ async def test_cancel_payment_voids_preauth():
         family_name="Cancel",
     )
     payment = await square.create_payment_authorization(
-        card_id=card_id,
+        source_id=card_id,
         customer_id=customer_id,
         booking_id=f"sandbox-cancel-test-{_RUN_ID}",
         amount_cents=100,
@@ -203,7 +203,7 @@ async def test_capture_payment_at_lower_amount():
         family_name="Capture",
     )
     payment = await square.create_payment_authorization(
-        card_id=card_id,
+        source_id=card_id,
         customer_id=customer_id,
         booking_id=f"sandbox-capture-test-{_RUN_ID}",
         amount_cents=500,
@@ -224,7 +224,7 @@ async def test_capture_payment_at_full_amount():
         family_name="FullCapture",
     )
     payment = await square.create_payment_authorization(
-        card_id=card_id,
+        source_id=card_id,
         customer_id=customer_id,
         booking_id=f"sandbox-capture-full-{_RUN_ID}",
         amount_cents=300,
@@ -235,3 +235,46 @@ async def test_capture_payment_at_full_amount():
     )
     assert captured.get("status") == "COMPLETED"
     assert captured.get("amount_money", {}).get("amount") == 300
+
+
+async def test_capture_payment_above_preauth_amount():
+    """
+    Authorization hold of 200 cents; attempt capture at 350 cents (75% above).
+
+    This test determines whether Square's PUT /v2/payments/{id} API accepts an
+    amount higher than the original pre-auth, which would make the void+recharge
+    path in finalize.py unnecessary (and would enable Apple Pay overage handling).
+
+    If Square returns an error, the void+recharge path remains the correct
+    approach for card-on-file payments; Apple Pay would be capped at the
+    pre-auth amount.
+    """
+    card_id, customer_id, _ = await square.create_card(
+        source_id="cnon:card-nonce-ok",
+        booking_id=f"sandbox-capture-above-{_RUN_ID}",
+        given_name="Sandbox",
+        family_name="AboveCapture",
+    )
+    payment = await square.create_payment_authorization(
+        source_id=card_id,
+        customer_id=customer_id,
+        booking_id=f"sandbox-capture-above-{_RUN_ID}",
+        amount_cents=200,
+    )
+    try:
+        captured = await square.capture_payment(
+            payment_id=payment["id"],
+            final_amount_cents=350,  # 75% above the pre-auth
+        )
+        # Square accepted the upward adjustment — void+recharge is not required.
+        assert captured.get("status") == "COMPLETED"
+        assert captured.get("amount_money", {}).get("amount") == 350
+    except Exception as exc:
+        # Square rejected the upward adjustment — log the error detail so we
+        # know the exact API constraint, then clean up.
+        await square.cancel_payment(payment["id"])
+        raise AssertionError(
+            f"Square rejected capture above pre-auth amount: {exc}\n"
+            "This means void+recharge is required for overage; "
+            "Apple Pay will be capped at the pre-auth amount."
+        ) from exc

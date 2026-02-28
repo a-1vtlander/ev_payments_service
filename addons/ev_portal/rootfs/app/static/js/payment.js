@@ -44,17 +44,19 @@
 
   /**
    * POST the token to /submit_payment then redirect on success.
-   * @param {string} token  - Square nonce token
+   * @param {string} token         - Square nonce token
    * @param {string} givenName
    * @param {string} familyName
-   * @param {function} onError  - called with msg string on non-success
+   * @param {function} onError     - called with msg string on non-success
+   * @param {string} paymentMethod - Square SDK details.method (CARD, APPLE_PAY, GOOGLE_PAY, ...)
    */
-  const submitToken = async (token, givenName, familyName, onError) => {
+  const submitToken = async (token, givenName, familyName, onError, paymentMethod = 'CARD') => {
     const fd = new FormData();
-    fd.append('source_id',   token);
-    fd.append('uid',         sessionUid);
-    fd.append('given_name',  givenName);
-    fd.append('family_name', familyName);
+    fd.append('source_id',      token);
+    fd.append('uid',            sessionUid);
+    fd.append('given_name',     givenName);
+    fd.append('family_name',    familyName);
+    fd.append('payment_method', paymentMethod);
 
     let resp, result;
     try {
@@ -142,10 +144,11 @@
       const familyName = billing.familyName ||
                          document.getElementById('family-name').value.trim() || 'Customer';
 
+      const method = (tokenResult.details && tokenResult.details.method) || 'APPLE_PAY';
       await submitToken(tokenResult.token, givenName, familyName, msg => {
         showBanner(msg);
         status.textContent = '';
-      });
+      }, method);
     });
 
   } catch (_) {
