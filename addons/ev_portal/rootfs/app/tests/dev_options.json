@@ -19,5 +19,6 @@
   "admin_tls_mode": "self_signed",
   "admin_tls_cert_path": "",
   "admin_tls_key_path": "",
-  "db_path": "ev_portal.db"
+  "db_path": "ev_portal.db",
+  "debug_mode": true
 }

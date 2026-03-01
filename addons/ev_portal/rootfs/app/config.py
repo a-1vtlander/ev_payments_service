@@ -96,6 +96,13 @@ def load_config() -> Dict[str, Any]:
     charger_id = (opts.get("charger_id") or "").strip()
     default_charger_id = (opts.get("default_charger_id") or "").strip()
 
+    debug_mode: bool = bool(opts.get("debug_mode", False))
+    if debug_mode:
+        log.warning(
+            "debug_mode is ENABLED — client-side diagnostic overlay will be "
+            "shown on the payment page. Disable in production."
+        )
+
     # Apple Pay domain association file content – preserved exactly, not stripped
     # (not logged – content is opaque binary-as-text from Square)
     applepay_domain_association: str = opts.get("applepay_domain_association") or ""
@@ -166,6 +173,7 @@ def load_config() -> Dict[str, Any]:
             "home_id":            home_id,
             "charger_id":         charger_id,
             "default_charger_id": default_charger_id,
+            "debug_mode":         debug_mode,
         },
         "access": {
             "allow_cidrs":                  access_allow_cidrs,

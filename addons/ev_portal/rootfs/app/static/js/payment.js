@@ -24,6 +24,27 @@
     sessionUid || '(EMPTY)',
   );
 
+  // ── Debug overlay: proxy console → on-page div (only when server sets debug_mode: true) ──
+  if (cfg.debugMode) {
+    const _dbgEl = document.getElementById('pay-debug');
+    if (_dbgEl) {
+      ['log', 'warn', 'error'].forEach(method => {
+        const _orig = console[method].bind(console);
+        console[method] = (...args) => {
+          _orig(...args);
+          const msg = args.map(a =>
+            a instanceof Error   ? String(a) :
+            typeof a === 'object' && a !== null ? JSON.stringify(a) :
+            String(a)
+          ).join(' ');
+          _dbgEl.style.display = '';
+          _dbgEl.textContent  += `[${method.toUpperCase()}] ${msg}\n`;
+          _dbgEl.scrollTop     = _dbgEl.scrollHeight;
+        };
+      });
+    }
+  }
+
   if (!appId)      console.error('[SDK] appId is missing — Square SDK will not initialise');
   if (!locationId) console.error('[SDK] locationId is missing — Square SDK will not initialise');
   if (!submitUrl)  console.error('[SDK] submitUrl is missing — payment submission will fail');

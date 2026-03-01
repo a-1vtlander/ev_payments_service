@@ -55,6 +55,9 @@ def render_card_form(
         log.error("render_card_form: app_id is EMPTY — Square SDK cannot initialise")
     if not _loc_id:
         log.error("render_card_form: location_id is EMPTY — Square SDK cannot initialise")
+    _debug_mode = state._app_config.get("debug_mode", False)
+    if _debug_mode:
+        log.info("render_card_form: debug_mode=True — client diagnostic overlay enabled")
     return templates.TemplateResponse(
         request,
         "start.html",
@@ -75,6 +78,7 @@ def render_card_form(
             "booking_end_time":    booking_end_time,
             "booking_end_display": booking_end_display,
             "rate_display":        rate_display,
+            "debug_mode":          _debug_mode,
         },
     )
 

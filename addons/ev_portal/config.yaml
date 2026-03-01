@@ -45,6 +45,7 @@ options:
   admin_tls_mode: "self_signed"
   admin_tls_cert_path: ""
   admin_tls_key_path: ""
+  debug_mode: false
 
 schema:
   mqtt_host: str
@@ -71,3 +72,4 @@ schema:
   admin_tls_mode: list(self_signed|provided)
   admin_tls_cert_path: str
   admin_tls_key_path: str
+  debug_mode: bool
