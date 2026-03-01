@@ -162,15 +162,19 @@ async def _submit_payment_impl(source_id, uid, given_name, family_name, payment_
             await db.mark_failed(idempotency_key, err_msg)
             return JSONResponse({"status": "card_error", "message": err_msg})
 
-    payment_id     = payment["id"]
-    payment_status = payment.get("status", "UNKNOWN")
-    log.info("Payment created: booking_id=%s payment_id=%s status=%s method=%s",
-             booking_id, payment_id, payment_status, payment_method)
+    payment_id            = payment["id"]
+    payment_status        = payment.get("status", "UNKNOWN")
+    payment_capabilities  = json.dumps(payment.get("capabilities", []))
+    payment_version_token = payment.get("version_token", "") or ""
+    log.info("Payment created: booking_id=%s payment_id=%s status=%s method=%s capabilities=%s",
+             booking_id, payment_id, payment_status, payment_method, payment_capabilities)
 
     await db.mark_authorized(
         idempotency_key,
         square_payment_id=payment_id,
         authorized_amount_cents=amount_cents,
+        payment_capabilities=payment_capabilities,
+        payment_version_token=payment_version_token,
         **card_meta,
     )
 

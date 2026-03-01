@@ -436,5 +436,13 @@ async def test_overcharge_idempotency_key_is_stable(tmp_db) -> None:
     ):
         await _handle_finalize(_good_payload(750))
         assert len(keys_used) == 1
-        assert keys_used[0].startswith("fin:")
+        # Key is a 64-char SHA-256 hex digest (stable across retries, unique per amount)
+        assert len(keys_used[0]) == 64
+        assert keys_used[0] == keys_used[0].lower()
+        # Two calls with same booking+amount must produce the same key
+        import hashlib
+        expected = hashlib.sha256(
+            f"fin:{row['idempotency_key']}:750".encode()
+        ).hexdigest()
+        assert keys_used[0] == expected
 

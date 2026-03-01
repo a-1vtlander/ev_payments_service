@@ -35,6 +35,7 @@ logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
 )
+log = logging.getLogger(__name__)
 
 app = FastAPI(title="EV Charger Portal", lifespan=lifespan)
 
@@ -72,15 +73,27 @@ async def root_redirect(request: Request):
     "/.well-known/apple-developer-merchantid-domain-association",
     include_in_schema=False,
 )
-async def apple_pay_domain_verification():
+async def apple_pay_domain_verification(request: Request):
     """
     Serve Apple Pay domain association file verbatim.
     Returns 404 if applepay_domain_association is not configured.
     Uses plain Response (not HTMLResponse) to avoid any HTML-encoding of content.
     """
+    client_ip = request.client.host if request.client else "unknown"
+    ua = request.headers.get("user-agent", "")
     content = state._access_config.get("applepay_domain_association", "")
     if not content:
+        log.warning(
+            "Apple Pay domain verification: NOT CONFIGURED — returning 404  "
+            "(client=%s  ua=%s)  "
+            "Apple Pay will be blocked in Safari until applepay_domain_association is set.",
+            client_ip, ua,
+        )
         return Response(content="Not configured", status_code=404, media_type="text/plain")
+    log.info(
+        "Apple Pay domain verification: serving %d-byte association file  (client=%s  ua=%s)",
+        len(content), client_ip, ua,
+    )
     # Encode to bytes explicitly – avoids any str/encoding ambiguity in Starlette
     return Response(
         content=content.encode("utf-8"),

@@ -78,10 +78,12 @@ def _guard_ephemeral_db(tmp_path_factory):
     db.DB_PATH  = original
 
     # Assert no stale .db files were left inside the tests source tree.
+    # ev_portal.db is intentionally placed here by run_dev.sh (EV_DB_PATH).
+    _DEV_DB_NAMES = {"ev_portal.db"}
     tests_dir = Path(__file__).parent
     stale = [
         p for p in tests_dir.rglob("*.db")
-        # Ignore anything already inside a pytest tmp dir (not under tests/)
+        if p.name not in _DEV_DB_NAMES
     ]
     if stale:
         raise AssertionError(

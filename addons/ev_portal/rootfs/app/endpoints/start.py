@@ -39,6 +39,22 @@ def render_card_form(
     Called from GET /start (and /enable-ev-session) and, if needed, from
     POST /submit_payment to redisplay the form with an inline error banner.
     """
+    _app_id     = state._square_config.get("app_id", "")
+    _loc_id     = state._square_config.get("location_id", "")
+    _js_url     = square.sdk_js_url()
+    _sandbox    = state._square_config.get("sandbox", True)
+    log.info(
+        "render_card_form: booking_id=%r  amount_cents=%d  sandbox=%s  "
+        "app_id=%r  location_id=%r  js_url=%s",
+        booking_id, amount_cents, _sandbox,
+        _app_id or '(EMPTY — SDK will fail!)',
+        _loc_id or '(EMPTY — SDK will fail!)',
+        _js_url,
+    )
+    if not _app_id:
+        log.error("render_card_form: app_id is EMPTY — Square SDK cannot initialise")
+    if not _loc_id:
+        log.error("render_card_form: location_id is EMPTY — Square SDK cannot initialise")
     return templates.TemplateResponse(
         request,
         "start.html",
@@ -46,9 +62,9 @@ def render_card_form(
             "booking_id":         booking_id,
             "amount_display":     f"${amount_cents / 100:.2f} USD",
             "amount_cents":       amount_cents,
-            "js_url":             square.sdk_js_url(),
-            "app_id":             state._square_config.get("app_id", ""),
-            "location_id":        state._square_config.get("location_id", ""),
+            "js_url":             _js_url,
+            "app_id":             _app_id,
+            "location_id":        _loc_id,
             "session_uid":        session_uid,
             "submit_url":         submit_url,
             "error_message":      error_message,

@@ -58,6 +58,12 @@ async def lifespan(app: FastAPI):
         state._square_config["sandbox"], state._square_config["location_id"],
     )
 
+    applepay_configured = bool(cfg["access"].get("applepay_domain_association"))
+    log.info(
+        "Apple Pay domain association : %s",
+        "configured" if applepay_configured else "NOT configured — Apple Pay will be unavailable",
+    )
+
     if not state._square_config["location_id"] and state._square_config["access_token"]:
         try:
             state._square_config["location_id"] = await fetch_first_location_id()

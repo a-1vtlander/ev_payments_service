@@ -26,6 +26,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 export EV_OPTIONS_PATH="${EV_OPTIONS_PATH:-${SCRIPT_DIR}/tests/dev_options.json}"
 export EV_DB_PATH="${EV_DB_PATH:-${SCRIPT_DIR}/tests/ev_portal.db}"
 export EV_TLS_DIR="${EV_TLS_DIR:-${SCRIPT_DIR}/tests/tls}"
+export EV_GUEST_HTTPS="${EV_GUEST_HTTPS:-1}"  # HTTPS on 127.0.0.1 for local dev
 
 if [[ ! -f "$EV_OPTIONS_PATH" ]]; then
     echo "ERROR: options file not found: $EV_OPTIONS_PATH" >&2
@@ -37,9 +38,9 @@ echo "  EV Charger Portal – dev server"
 echo "  Options  : $EV_OPTIONS_PATH"
 echo "  DB       : $EV_DB_PATH"
 echo "  TLS dir  : $EV_TLS_DIR"
-echo "  Guest    : http://localhost:8090"
+echo "  Guest    : https://localhost:8090  (self-signed; trust once via tests/tls/trust_dev_cert.sh)"
 echo "  Admin    : https://localhost:8091/admin"
-echo "  Health   : http://localhost:8090/health"
+echo "  Health   : https://localhost:8090/health"
 echo "-------------------------------------------------------"
 
 exec python "${SCRIPT_DIR}/serve.py"

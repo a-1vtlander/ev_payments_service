@@ -16,13 +16,14 @@ initialises MQTT, Square, and the DB.
 
 import asyncio
 import logging
+import os
 import sys
 
 import uvicorn
 
 import state
 from config import load_config
-from tls import ensure_cert
+from tls import ensure_cert, ensure_guest_cert
 
 logging.basicConfig(
     level=logging.INFO,
@@ -42,14 +43,43 @@ async def _serve_all() -> None:
 
     admin_cfg = cfg["admin"]
 
-    # ── Guest server (plain HTTP – Cloudflare terminates TLS at the edge) ─────
-    guest_config = uvicorn.Config(
-        "main:app",
-        host="0.0.0.0",
-        port=GUEST_PORT,
-        log_level="info",
-        access_log=True,
-    )
+    # ── Guest server ───────────────────────────────────────────────────────────
+    # In production: plain HTTP – Cloudflare terminates TLS at the edge.
+    # In dev (EV_GUEST_HTTPS=1): self-signed HTTPS bound to 127.0.0.1 only so
+    # Square's Web Payments SDK gets the secure context it requires locally.
+    dev_https = os.environ.get("EV_GUEST_HTTPS", "").strip() not in ("", "0", "false", "no")
+    if dev_https:
+        try:
+            guest_cert, guest_key = ensure_guest_cert()
+        except Exception as exc:
+            log.critical("TLS setup for guest server failed: %s", exc)
+            guest_cert = guest_key = None
+
+        if guest_cert:
+            guest_config = uvicorn.Config(
+                "main:app",
+                host="127.0.0.1",
+                port=GUEST_PORT,
+                ssl_certfile=guest_cert,
+                ssl_keyfile=guest_key,
+                log_level="info",
+                access_log=True,
+            )
+            log.info(
+                "Guest server starting on https://127.0.0.1:%s  (localhost-only TLS)",
+                GUEST_PORT,
+            )
+        else:
+            dev_https = False  # fall through to plain HTTP below
+
+    if not dev_https:
+        guest_config = uvicorn.Config(
+            "main:app",
+            host="0.0.0.0",
+            port=GUEST_PORT,
+            log_level="info",
+            access_log=True,
+        )
     servers = [uvicorn.Server(guest_config)]
 
     # ── Admin server (HTTPS) ───────────────────────────────────────────────

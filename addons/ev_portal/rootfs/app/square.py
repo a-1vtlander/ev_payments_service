@@ -8,15 +8,28 @@ Covers:
   - POST /v2/payments/{id}/complete – capture a pre-auth at the final amount
 """
 
+from __future__ import annotations
+
 import httpx
 import json
 import logging
+import time
 import uuid
 from typing import Optional
 
 import state
+import telemetry
 
 log = logging.getLogger(__name__)
+
+
+def _square_errors(resp_text: str) -> tuple[str | None, str | None]:
+    """Extract (error_code, error_detail) from a Square error response body."""
+    try:
+        first = json.loads(resp_text).get("errors", [{}])[0]
+        return first.get("code"), first.get("detail")
+    except Exception:
+        return None, None
 
 SQUARE_API_VERSION  = "2026-01-22"
 SQUARE_SANDBOX_BASE = "https://connect.squareupsandbox.com"
@@ -88,12 +101,26 @@ async def create_customer(booking_id: str, given_name: str, family_name: str) ->
         url, json.dumps(body, indent=2),
     )
 
+    t0 = time.monotonic()
     async with httpx.AsyncClient(timeout=10.0) as client:
         resp = await client.post(url, json=body, headers=_headers())
+    duration_ms = int((time.monotonic() - t0) * 1000)
 
     log.info(
         "POST %s → HTTP %s\nResponse body:\n%s",
         url, resp.status_code, resp.text,
+    )
+    err_code, err_detail = _square_errors(resp.text) if not resp.is_success else (None, None)
+    await telemetry.record_event(
+        "PAYMENT_PROCESSOR", "CREATE_CUSTOMER",
+        booking_id=booking_id,
+        http_status=resp.status_code,
+        success=resp.is_success,
+        error_code=err_code,
+        error_detail=err_detail,
+        duration_ms=duration_ms,
+        request_json=json.dumps({k: v for k, v in body.items() if k != "idempotency_key"}),
+        response_json=resp.text,
     )
     if not resp.is_success:
         log.error(
@@ -135,12 +162,28 @@ async def create_card(
         url, json.dumps(body, indent=2),
     )
 
+    t0 = time.monotonic()
     async with httpx.AsyncClient(timeout=10.0) as client:
         resp = await client.post(url, json=body, headers=_headers())
+    duration_ms = int((time.monotonic() - t0) * 1000)
 
     log.info(
         "POST %s \u2192 HTTP %s\nResponse body:\n%s",
         url, resp.status_code, resp.text,
+    )
+    card_id_on_success = resp.json().get("card", {}).get("id") if resp.is_success else None
+    err_code, err_detail = _square_errors(resp.text) if not resp.is_success else (None, None)
+    await telemetry.record_event(
+        "PAYMENT_PROCESSOR", "CREATE_CARD",
+        booking_id=booking_id,
+        processor_payment_id=card_id_on_success,
+        http_status=resp.status_code,
+        success=resp.is_success,
+        error_code=err_code,
+        error_detail=err_detail,
+        duration_ms=duration_ms,
+        request_json=json.dumps({k: v for k, v in body.items() if k != "idempotency_key"}),
+        response_json=resp.text,
     )
     if not resp.is_success:
         log.error(
@@ -206,12 +249,29 @@ async def create_payment_authorization(
         url, json.dumps(body, indent=2),
     )
 
+    t0 = time.monotonic()
     async with httpx.AsyncClient(timeout=10.0) as client:
         resp = await client.post(url, json=body, headers=_headers())
+    duration_ms = int((time.monotonic() - t0) * 1000)
 
     log.info(
         "POST %s \u2192 HTTP %s\nResponse body:\n%s",
         url, resp.status_code, resp.text,
+    )
+    payment_id_on_success = resp.json().get("payment", {}).get("id") if resp.is_success else None
+    err_code, err_detail = _square_errors(resp.text) if not resp.is_success else (None, None)
+    await telemetry.record_event(
+        "PAYMENT_PROCESSOR", "CREATE_PAYMENT",
+        booking_id=booking_id,
+        processor_payment_id=payment_id_on_success,
+        amount_cents=amount_cents,
+        http_status=resp.status_code,
+        success=resp.is_success,
+        error_code=err_code,
+        error_detail=err_detail,
+        duration_ms=duration_ms,
+        request_json=json.dumps({k: v for k, v in body.items() if k != "idempotency_key"}),
+        response_json=resp.text,
     )
     if not resp.is_success:
         log.error(
@@ -252,11 +312,26 @@ async def capture_payment(payment_id: str, final_amount_cents: int) -> dict:
         "PUT %s\nRequest body:\n%s",
         update_url, json.dumps(update_body, indent=2),
     )
+    t0 = time.monotonic()
     async with httpx.AsyncClient(timeout=10.0) as client:
         update_resp = await client.put(update_url, json=update_body, headers=_headers())
+    duration_ms = int((time.monotonic() - t0) * 1000)
     log.info(
         "PUT %s -> HTTP %s\nResponse body:\n%s",
         update_url, update_resp.status_code, update_resp.text,
+    )
+    err_code, err_detail = _square_errors(update_resp.text) if not update_resp.is_success else (None, None)
+    await telemetry.record_event(
+        "PAYMENT_PROCESSOR", "UPDATE_PAYMENT",
+        processor_payment_id=payment_id,
+        amount_cents=final_amount_cents,
+        http_status=update_resp.status_code,
+        success=update_resp.is_success,
+        error_code=err_code,
+        error_detail=err_detail,
+        duration_ms=duration_ms,
+        request_json=json.dumps({k: v for k, v in update_body.items() if k != "idempotency_key"}),
+        response_json=update_resp.text,
     )
     if not update_resp.is_success:
         log.error(
@@ -273,11 +348,25 @@ async def capture_payment(payment_id: str, final_amount_cents: int) -> dict:
     complete_url = f"{_base_url()}/v2/payments/{payment_id}/complete"
     complete_body: dict = {}
     log.info("POST %s (no body)", complete_url)
+    t0 = time.monotonic()
     async with httpx.AsyncClient(timeout=10.0) as client:
         complete_resp = await client.post(complete_url, json=complete_body, headers=_headers())
+    duration_ms = int((time.monotonic() - t0) * 1000)
     log.info(
         "POST %s -> HTTP %s\nResponse body:\n%s",
         complete_url, complete_resp.status_code, complete_resp.text,
+    )
+    err_code, err_detail = _square_errors(complete_resp.text) if not complete_resp.is_success else (None, None)
+    await telemetry.record_event(
+        "PAYMENT_PROCESSOR", "COMPLETE_PAYMENT",
+        processor_payment_id=payment_id,
+        amount_cents=final_amount_cents,
+        http_status=complete_resp.status_code,
+        success=complete_resp.is_success,
+        error_code=err_code,
+        error_detail=err_detail,
+        duration_ms=duration_ms,
+        response_json=complete_resp.text,
     )
     if not complete_resp.is_success:
         log.error(
@@ -300,11 +389,24 @@ async def cancel_payment(payment_id: str) -> dict:
     """
     url = f"{_base_url()}/v2/payments/{payment_id}/cancel"
     log.info("POST %s (void pre-auth, no charge)", url)
+    t0 = time.monotonic()
     async with httpx.AsyncClient(timeout=10.0) as client:
         resp = await client.post(url, json={}, headers=_headers())
+    duration_ms = int((time.monotonic() - t0) * 1000)
     log.info(
         "POST %s -> HTTP %s\nResponse body:\n%s",
         url, resp.status_code, resp.text,
+    )
+    err_code, err_detail = _square_errors(resp.text) if not resp.is_success else (None, None)
+    await telemetry.record_event(
+        "PAYMENT_PROCESSOR", "CANCEL_PAYMENT",
+        processor_payment_id=payment_id,
+        http_status=resp.status_code,
+        success=resp.is_success,
+        error_code=err_code,
+        error_detail=err_detail,
+        duration_ms=duration_ms,
+        response_json=resp.text,
     )
     if not resp.is_success:
         log.error(
@@ -357,12 +459,29 @@ async def charge_card_payment(
         url, json.dumps(body, indent=2),
     )
 
+    t0 = time.monotonic()
     async with httpx.AsyncClient(timeout=10.0) as client:
         resp = await client.post(url, json=body, headers=_headers())
+    duration_ms = int((time.monotonic() - t0) * 1000)
 
     log.info(
-        "POST %s → HTTP %s\nResponse body:\n%s",
+        "POST %s \u2192 HTTP %s\nResponse body:\n%s",
         url, resp.status_code, resp.text,
+    )
+    charge_id_on_success = resp.json().get("payment", {}).get("id") if resp.is_success else None
+    err_code, err_detail = _square_errors(resp.text) if not resp.is_success else (None, None)
+    await telemetry.record_event(
+        "PAYMENT_PROCESSOR", "CHARGE_PAYMENT",
+        booking_id=booking_id,
+        processor_payment_id=charge_id_on_success,
+        amount_cents=amount_cents,
+        http_status=resp.status_code,
+        success=resp.is_success,
+        error_code=err_code,
+        error_detail=err_detail,
+        duration_ms=duration_ms,
+        request_json=json.dumps({k: v for k, v in body.items() if k != "idempotency_key"}),
+        response_json=resp.text,
     )
     if not resp.is_success:
         log.error(
@@ -394,11 +513,21 @@ async def refund_payment(
         # Fetch the payment to get the captured amount.
         log.info("refund_payment: fetching payment %r to determine refund amount", payment_id)
         try:
+            t0 = time.monotonic()
             async with httpx.AsyncClient(timeout=10.0) as client:
                 pay_resp = await client.get(
                     f"{_base_url()}/v2/payments/{payment_id}", headers=_headers()
                 )
-            log.info("GET /v2/payments/%s → HTTP %s", payment_id, pay_resp.status_code)
+            duration_ms = int((time.monotonic() - t0) * 1000)
+            log.info("GET /v2/payments/%s \u2192 HTTP %s", payment_id, pay_resp.status_code)
+            await telemetry.record_event(
+                "PAYMENT_PROCESSOR", "FETCH_PAYMENT",
+                processor_payment_id=payment_id,
+                http_status=pay_resp.status_code,
+                success=pay_resp.is_success,
+                duration_ms=duration_ms,
+                response_json=pay_resp.text,
+            )
             pay_resp.raise_for_status()
         except httpx.HTTPStatusError as exc:
             log.error(
@@ -422,10 +551,26 @@ async def refund_payment(
         body["reason"] = reason
 
     log.info("POST %s\nRequest body:\n%s", url, json.dumps(body, indent=2))
+    t0 = time.monotonic()
     async with httpx.AsyncClient(timeout=10.0) as client:
         resp = await client.post(url, json=body, headers=_headers())
+    duration_ms = int((time.monotonic() - t0) * 1000)
     log.info("POST %s -> HTTP %s\nResponse body:\n%s", url, resp.status_code, resp.text)
 
+    refund_id_on_success = resp.json().get("refund", {}).get("id") if resp.is_success else None
+    err_code, err_detail = _square_errors(resp.text) if not resp.is_success else (None, None)
+    await telemetry.record_event(
+        "PAYMENT_PROCESSOR", "REFUND_PAYMENT",
+        processor_payment_id=refund_id_on_success or payment_id,
+        amount_cents=amount_cents,
+        http_status=resp.status_code,
+        success=resp.is_success,
+        error_code=err_code,
+        error_detail=err_detail,
+        duration_ms=duration_ms,
+        request_json=json.dumps({k: v for k, v in body.items() if k not in ("idempotency_key",)}),
+        response_json=resp.text,
+    )
     if not resp.is_success:
         log.error(
             "refund_payment: Square error HTTP %s for payment_id=%r "

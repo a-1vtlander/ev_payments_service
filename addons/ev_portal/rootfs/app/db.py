@@ -102,15 +102,50 @@ CREATE INDEX IF NOT EXISTS idx_audit_log_key
 ON audit_log (idempotency_key)
 """
 
+_CREATE_EVENTS_TABLE = """
+CREATE TABLE IF NOT EXISTS events (
+    id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts                    TEXT NOT NULL,
+    source                TEXT NOT NULL,
+    event_type            TEXT NOT NULL,
+    actor                 TEXT,
+    idempotency_key       TEXT,
+    booking_id            TEXT,
+    processor_payment_id  TEXT,
+    amount_cents          INTEGER,
+    http_status           INTEGER,
+    success               INTEGER,
+    error_code            TEXT,
+    error_detail          TEXT,
+    duration_ms           INTEGER,
+    request_json          TEXT,
+    response_json         TEXT,
+    metadata_json         TEXT
+)
+"""
+
+_EVENTS_IDX_KEY = """
+CREATE INDEX IF NOT EXISTS idx_events_key
+ON events (idempotency_key)
+"""
+
+_EVENTS_IDX_TS = """
+CREATE INDEX IF NOT EXISTS idx_events_ts
+ON events (ts)
+"""
+
 
 def _migrate_sessions(conn: sqlite3.Connection) -> None:
     """Add new columns to existing sessions table without breaking old rows."""
     existing = {row[1] for row in conn.execute("PRAGMA table_info(sessions)")}
     new_cols = [
-        ("note",             "TEXT"),
-        ("is_deleted",       "INTEGER NOT NULL DEFAULT 0"),
-        ("guest_name",       "TEXT"),
-        ("booking_end_time", "TEXT"),
+        ("note",                 "TEXT"),
+        ("is_deleted",           "INTEGER NOT NULL DEFAULT 0"),
+        ("guest_name",           "TEXT"),
+        ("booking_end_time",     "TEXT"),
+        # Payment processor response metadata stored at authorization time
+        ("payment_capabilities", "TEXT"),
+        ("payment_version_token", "TEXT"),
     ]
     for col, defn in new_cols:
         if col not in existing:
@@ -124,6 +159,9 @@ def _init_db_sync() -> None:
         conn.execute(_CREATE_INDEX_SESSION_ID)
         conn.execute(_CREATE_AUDIT_LOG)
         conn.execute(_AUDIT_LOG_IDX)
+        conn.execute(_CREATE_EVENTS_TABLE)
+        conn.execute(_EVENTS_IDX_KEY)
+        conn.execute(_EVENTS_IDX_TS)
         _migrate_sessions(conn)
         conn.commit()
 
@@ -524,9 +562,85 @@ async def write_audit_log(
     after_json: Optional[str] = None,
     result_json: Optional[str] = None,
 ) -> None:
-    """Append an entry to the audit_log table. Never logs secrets."""
+    """Backward-compatible wrapper — delegates to write_event()."""
+    import json as _json  # noqa: PLC0415
+    meta: dict = {}
+    if before_json:  meta["before"]  = before_json
+    if after_json:   meta["after"]   = after_json
+    if result_json:  meta["result"]  = result_json
+    if reason:       meta["reason"]  = reason
+    await write_event(
+        source="ADMIN",
+        event_type=action.upper(),
+        actor=actor,
+        idempotency_key=idempotency_key,
+        metadata_json=_json.dumps(meta) if meta else None,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Events log (unified telemetry)
+# ---------------------------------------------------------------------------
+
+def _write_event_sync(
+    source: str,
+    event_type: str,
+    actor: Optional[str],
+    idempotency_key: Optional[str],
+    booking_id: Optional[str],
+    processor_payment_id: Optional[str],
+    amount_cents: Optional[int],
+    http_status: Optional[int],
+    success: Optional[int],
+    error_code: Optional[str],
+    error_detail: Optional[str],
+    duration_ms: Optional[int],
+    request_json: Optional[str],
+    response_json: Optional[str],
+    metadata_json: Optional[str],
+) -> None:
+    with _connect() as conn:
+        conn.execute(
+            """
+            INSERT INTO events
+              (ts, source, event_type, actor, idempotency_key, booking_id,
+               processor_payment_id, amount_cents, http_status, success,
+               error_code, error_detail, duration_ms,
+               request_json, response_json, metadata_json)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                _now(), source, event_type, actor, idempotency_key, booking_id,
+                processor_payment_id, amount_cents, http_status, success,
+                error_code, error_detail, duration_ms,
+                request_json, response_json, metadata_json,
+            ),
+        )
+        conn.commit()
+
+
+async def write_event(
+    source: str,
+    event_type: str,
+    actor: Optional[str] = None,
+    idempotency_key: Optional[str] = None,
+    booking_id: Optional[str] = None,
+    processor_payment_id: Optional[str] = None,
+    amount_cents: Optional[int] = None,
+    http_status: Optional[int] = None,
+    success: Optional[int] = None,
+    error_code: Optional[str] = None,
+    error_detail: Optional[str] = None,
+    duration_ms: Optional[int] = None,
+    request_json: Optional[str] = None,
+    response_json: Optional[str] = None,
+    metadata_json: Optional[str] = None,
+) -> None:
+    """Append an entry to the events table."""
     await asyncio.to_thread(
-        _write_audit_log_sync,
-        actor, action, idempotency_key,
-        reason, before_json, after_json, result_json,
+        _write_event_sync,
+        source, event_type, actor, idempotency_key, booking_id,
+        processor_payment_id, amount_cents, http_status, success,
+        error_code, error_detail, duration_ms,
+        request_json, response_json, metadata_json,
     )

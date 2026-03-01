@@ -24,8 +24,10 @@ Flow:
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
+import re
 from typing import Optional
 
 import db
@@ -36,6 +38,16 @@ log = logging.getLogger(__name__)
 
 _MAX_RETRIES = 3
 _RETRY_DELAY_S = 5.0
+
+# HTTP 4xx errors from Square are client-side mistakes (bad idempotency key,
+# invalid card, etc.) and will never succeed on a retry.  Only 5xx / network
+# errors are worth retrying.
+_CLIENT_ERR_RE = re.compile(r"error (4\d\d):")
+
+
+def _is_client_error(exc: Exception) -> bool:
+    """Return True if the exception represents a Square 4xx response."""
+    return bool(_CLIENT_ERR_RE.search(str(exc)))
 
 
 async def _handle_finalize(payload_str: str) -> None:
@@ -136,6 +148,11 @@ async def _handle_finalize(payload_str: str) -> None:
             except Exception as exc:  # noqa: BLE001
                 last_error = str(exc)
                 log.warning("finalize_session: void attempt %d failed: %s", attempt, exc)
+                if _is_client_error(exc):
+                    log.error(
+                        "finalize_session: void failed with non-retryable client error — aborting retries"
+                    )
+                    break
                 if attempt < _MAX_RETRIES:
                     await asyncio.sleep(_RETRY_DELAY_S)
         log.error(
@@ -197,8 +214,16 @@ async def _handle_finalize(payload_str: str) -> None:
             )
             return
 
-        # Stable idempotency key so Square deduplicates retries.
-        charge_idem = f"fin:{idempotency_key}"[:45]
+        # Idempotency key includes the final amount so that a re-finalize at a
+        # different amount never collides with a prior attempt at this booking.
+        # SHA-256 hex is 64 chars; Square allows up to 128 — no truncation needed.
+        charge_idem = hashlib.sha256(
+            f"fin:{idempotency_key}:{final_amount_cents}".encode()
+        ).hexdigest()
+        log.info(
+            "finalize_session: direct-charge idempotency_key=%r  (derived from key+amount)",
+            charge_idem,
+        )
 
         last_error: Optional[str] = None
         for attempt in range(1, _MAX_RETRIES + 1):
@@ -235,6 +260,13 @@ async def _handle_finalize(payload_str: str) -> None:
                     "finalize_session: direct-charge attempt %d failed: %s",
                     attempt, exc,
                 )
+                if _is_client_error(exc):
+                    log.error(
+                        "finalize_session: direct-charge failed with non-retryable client error "
+                        "— aborting retries (idempotency_key=%r)",
+                        charge_idem,
+                    )
+                    break
                 if attempt < _MAX_RETRIES:
                     await asyncio.sleep(_RETRY_DELAY_S)
 
@@ -285,6 +317,13 @@ async def _handle_finalize(payload_str: str) -> None:
             log.warning(
                 "finalize_session: capture attempt %d failed: %s", attempt, exc
             )
+            if _is_client_error(exc):
+                log.error(
+                    "finalize_session: capture failed with non-retryable client error "
+                    "— aborting retries (payment_id=%r)",
+                    square_payment_id,
+                )
+                break
             if attempt < _MAX_RETRIES:
                 await asyncio.sleep(_RETRY_DELAY_S)
 
