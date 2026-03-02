@@ -3,14 +3,16 @@ access.py — IP-based access control middleware for the public guest portal.
 
 Algorithm
 ---------
-1. remote_ip  = request.client.host  (direct TCP socket – always Cloudflare or
-                                       a LAN / Tailscale peer in practice)
+1. remote_ip  = request.client.host  (direct TCP socket)
 
-2. If remote_ip is a known Cloudflare egress address:
-       effective_ip = CF-Connecting-IP header  (the real client IP)
-       If header missing → deny 403
-   Else:
-       effective_ip = remote_ip
+2. Determine effective_ip:
+   a) remote_ip is a known Cloudflare egress IP  (direct CF edge → HTTPS reverse proxy):
+          effective_ip = CF-Connecting-IP header  — if missing → deny 403
+   b) remote_ip is private/loopback AND CF-Connecting-IP header is present
+      (cloudflared tunnel daemon running on LAN — proxies from CF edge to local app):
+          effective_ip = CF-Connecting-IP header
+   c) Otherwise (direct LAN or Tailscale connection, no header):
+          effective_ip = remote_ip
 
 3. If effective_ip NOT within filter_access_to → 403 text/plain "Access restricted"
 4. Otherwise continue the request.
@@ -120,12 +122,20 @@ class AccessControlMiddleware(BaseHTTPMiddleware):
             return await call_next(request)
 
         remote_ip = request.client.host if request.client else ""
+        cf_header  = request.headers.get("cf-connecting-ip", "").strip()
+
+        # Is the remote a private/loopback address? (covers cloudflared tunnel daemon)
+        try:
+            _raddr = ipaddress.ip_address(remote_ip) if remote_ip else None
+            _is_private_remote = _raddr is not None and (_raddr.is_private or _raddr.is_loopback)
+        except ValueError:
+            _is_private_remote = False
 
         if _addr_in(remote_ip, _CF_NETS):
-            # Request arrived via Cloudflare — trust CF-Connecting-IP for real IP.
-            effective_ip = request.headers.get("cf-connecting-ip", "").strip()
+            # Direct Cloudflare edge proxy — CF-Connecting-IP is mandatory.
+            effective_ip = cf_header
             log.info(
-                "AccessControlMiddleware: Cloudflare proxy detected remote_ip=%s  CF-Connecting-IP=%r",
+                "AccessControlMiddleware: Cloudflare edge detected remote_ip=%s  CF-Connecting-IP=%r",
                 remote_ip, effective_ip or "(missing)",
             )
             if not effective_ip:
@@ -135,7 +145,17 @@ class AccessControlMiddleware(BaseHTTPMiddleware):
                     remote_ip, request.method, request.url.path,
                 )
                 return _DENY
+        elif _is_private_remote and cf_header:
+            # Cloudflare tunnel (cloudflared) running on LAN — the daemon's local
+            # IP is the TCP remote, but CF-Connecting-IP carries the real client IP.
+            effective_ip = cf_header
+            log.info(
+                "AccessControlMiddleware: Cloudflare tunnel detected "
+                "remote_ip=%s (LAN daemon)  CF-Connecting-IP=%r",
+                remote_ip, effective_ip,
+            )
         else:
+            # Direct LAN / Tailscale connection with no CF header — use socket IP.
             effective_ip = remote_ip
 
         log.info(

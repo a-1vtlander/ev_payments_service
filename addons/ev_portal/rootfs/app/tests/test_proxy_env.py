@@ -441,19 +441,104 @@ async def test_access_control_cidr_range_and_multi(
       - IPs just outside are blocked.
       - Multiple CIDRs: allowed if matching *any* entry, blocked if matching none.
       - /32 host-only entries allow exactly that address.
+
+    Uses a plain client (no CF headers) to simulate a direct LAN connection,
+    so the tunnel-detection branch is not triggered and the socket IP is used
+    as-is for the allow-list check.
     """
     import main as m
+    from httpx import AsyncClient, ASGITransport
 
     state._access_config["allow_cidrs"] = allow_cidrs
     access._allow_nets_cache = None
 
-    async with _cf_client(m.app, client_ip=client_ip) as c:
-        resp = await c.get("/health", headers={"host": "example.com"})
+    wrapped = _FakeClientApp(m.app, client_ip)
+    async with AsyncClient(
+        transport=ASGITransport(app=wrapped),
+        base_url="http://test",
+        headers={"host": "example.com"},
+    ) as c:
+        resp = await c.get("/health")
 
     assert resp.status_code == expected, (
         f"IP {client_ip!r} with allow_cidrs={allow_cidrs!r} "
         f"expected {expected}, got {resp.status_code}"
     )
+
+
+# ---------------------------------------------------------------------------
+# 4c. Cloudflare tunnel (cloudflared daemon on LAN) — effective IP is from header
+# ---------------------------------------------------------------------------
+
+# A LAN IP that represents the cloudflared daemon process (not a real user).
+_TUNNEL_DAEMON_IP = "192.168.5.55"
+
+
+async def test_access_tunnel_daemon_ip_uses_cf_connecting_header_allowed(
+    patched_state: None,
+) -> None:
+    """
+    When the TCP remote is a private LAN IP (cloudflared daemon) and
+    CF-Connecting-IP is present, the middleware must use the header IP for
+    the allow-list check — not the daemon's local address.
+
+    Here the real user IP (_USER_IP = 203.0.113.42) is explicitly allowed.
+    """
+    import main as m
+
+    state._access_config["allow_cidrs"] = [f"{_USER_IP}/32"]
+    access._allow_nets_cache = None
+
+    async with _cf_client(m.app, client_ip=_TUNNEL_DAEMON_IP) as c:
+        resp = await c.get("/health", headers={"host": "example.com"})
+
+    assert resp.status_code == 200
+
+
+async def test_access_tunnel_daemon_ip_uses_cf_connecting_header_denied(
+    patched_state: None,
+) -> None:
+    """
+    Same tunnel setup but the real user IP is NOT in the allow list → 403.
+    Confirms we are checking the header IP, not the daemon's LAN IP.
+    """
+    import main as m
+
+    # Allow only a range that contains the daemon IP but NOT the real user IP.
+    state._access_config["allow_cidrs"] = ["192.168.5.0/24"]
+    access._allow_nets_cache = None
+
+    async with _cf_client(m.app, client_ip=_TUNNEL_DAEMON_IP) as c:
+        resp = await c.get("/health", headers={"host": "example.com"})
+
+    # Daemon IP (192.168.5.55) would pass, but user IP (203.0.113.42) must not.
+    assert resp.status_code == 403
+
+
+async def test_access_direct_lan_no_cf_header_uses_socket_ip(
+    patched_state: None,
+) -> None:
+    """
+    Direct LAN connection with no CF-Connecting-IP header — middleware must
+    fall back to the raw socket IP (not the absent header).
+    """
+    import main as m
+    from httpx import AsyncClient, ASGITransport
+
+    state._access_config["allow_cidrs"] = ["192.168.5.0/24"]
+    access._allow_nets_cache = None
+
+    wrapped = _FakeClientApp(m.app, _TUNNEL_DAEMON_IP)
+    # No CF headers — plain direct request from a LAN device.
+    async with AsyncClient(
+        transport=ASGITransport(app=wrapped),
+        base_url="http://test",
+        headers={"host": "example.com"},
+    ) as c:
+        resp = await c.get("/health")
+
+    # Socket IP 192.168.5.55 is in 192.168.5.0/24 → allowed.
+    assert resp.status_code == 200
 
 
 # ---------------------------------------------------------------------------
