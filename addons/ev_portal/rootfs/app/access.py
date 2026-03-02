@@ -124,6 +124,10 @@ class AccessControlMiddleware(BaseHTTPMiddleware):
         if _addr_in(remote_ip, _CF_NETS):
             # Request arrived via Cloudflare — trust CF-Connecting-IP for real IP.
             effective_ip = request.headers.get("cf-connecting-ip", "").strip()
+            log.info(
+                "AccessControlMiddleware: Cloudflare proxy detected remote_ip=%s  CF-Connecting-IP=%r",
+                remote_ip, effective_ip or "(missing)",
+            )
             if not effective_ip:
                 log.warning(
                     "403 access denied: request from Cloudflare IP %s has no "
@@ -133,6 +137,11 @@ class AccessControlMiddleware(BaseHTTPMiddleware):
                 return _DENY
         else:
             effective_ip = remote_ip
+
+        log.info(
+            "AccessControlMiddleware: remote_ip=%s  effective_ip=%s  allow_nets=%s  path=%s",
+            remote_ip, effective_ip, [str(n) for n in allow_nets], request.url.path,
+        )
 
         if not _addr_in(effective_ip, allow_nets):
             log.warning(

@@ -108,10 +108,33 @@ def load_config() -> Dict[str, Any]:
     applepay_domain_association: str = opts.get("applepay_domain_association") or ""
 
     # Access control: list of allowed CIDRs.  When empty / absent → no filtering.
+    # Handles three forms users may supply:
+    #   1. Proper YAML list:    ["192.168.1.0/24", "10.0.0.0/8"]  → list of str
+    #   2. Comma-separated str: "192.168.1.0/24, 10.0.0.0/8"      → split on comma
+    #   3. JSON-encoded string: '["192.168.1.0/24"]'               → json.loads
+    import json as _json
     raw_cidrs = opts.get("filter_access_to") or []
     if isinstance(raw_cidrs, str):
-        raw_cidrs = [c.strip() for c in raw_cidrs.split(",") if c.strip()]
-    access_allow_cidrs: list = [str(c).strip() for c in raw_cidrs if str(c).strip()]
+        raw_cidrs = raw_cidrs.strip()
+        if raw_cidrs.startswith("["):
+            try:
+                raw_cidrs = _json.loads(raw_cidrs)
+            except ValueError:
+                raw_cidrs = [c.strip() for c in raw_cidrs.strip("[]").split(",") if c.strip()]
+        else:
+            raw_cidrs = [c.strip() for c in raw_cidrs.split(",") if c.strip()]
+    # Each element may itself be a JSON array string (HA UI quirk).
+    flattened: list = []
+    for item in raw_cidrs:
+        item = str(item).strip()
+        if item.startswith("["):
+            try:
+                flattened.extend(str(c).strip() for c in _json.loads(item) if str(c).strip())
+            except ValueError:
+                flattened.extend(c.strip() for c in item.strip("[]").split(",") if c.strip())
+        elif item:
+            flattened.append(item)
+    access_allow_cidrs: list = flattened
 
     # ── Startup log (no secrets) ────────────────────────────────────────────
     log.info(

@@ -408,6 +408,54 @@ async def test_access_control_invalid_cidr_skipped(
     assert resp.status_code == 200
 
 
+@pytest.mark.parametrize(
+    "client_ip,allow_cidrs,expected",
+    [
+        # ── Single /24 — hosts inside the subnet ──────────────────────────
+        ("192.168.1.1",   ["192.168.1.0/24"], 200),   # first usable host
+        ("192.168.1.128", ["192.168.1.0/24"], 200),   # mid-range
+        ("192.168.1.254", ["192.168.1.0/24"], 200),   # last usable host
+        # ── Single /24 — hosts outside the subnet ────────────────────────
+        ("192.168.2.1",   ["192.168.1.0/24"], 403),   # adjacent subnet
+        ("10.0.0.1",      ["192.168.1.0/24"], 403),   # completely different range
+        # ── Multiple CIDRs — IP matches first CIDR ───────────────────────
+        ("192.168.1.50",  ["192.168.1.0/24", "10.0.0.0/8"], 200),
+        # ── Multiple CIDRs — IP matches second CIDR ──────────────────────
+        ("10.5.5.5",      ["192.168.1.0/24", "10.0.0.0/8"], 200),
+        # ── Multiple CIDRs — IP matches neither ──────────────────────────
+        ("172.16.0.1",    ["192.168.1.0/24", "10.0.0.0/8"], 403),
+        # ── Exact host (/32) ─────────────────────────────────────────────
+        ("100.64.0.1",    ["100.64.0.1/32"], 200),    # exact match
+        ("100.64.0.2",    ["100.64.0.1/32"], 403),    # one address off
+    ],
+)
+async def test_access_control_cidr_range_and_multi(
+    client_ip: str,
+    allow_cidrs: list,
+    expected: int,
+    patched_state: None,
+) -> None:
+    """
+    Middleware enforces CIDR ranges correctly:
+      - IPs within a /24 at both boundaries are allowed.
+      - IPs just outside are blocked.
+      - Multiple CIDRs: allowed if matching *any* entry, blocked if matching none.
+      - /32 host-only entries allow exactly that address.
+    """
+    import main as m
+
+    state._access_config["allow_cidrs"] = allow_cidrs
+    access._allow_nets_cache = None
+
+    async with _cf_client(m.app, client_ip=client_ip) as c:
+        resp = await c.get("/health", headers={"host": "example.com"})
+
+    assert resp.status_code == expected, (
+        f"IP {client_ip!r} with allow_cidrs={allow_cidrs!r} "
+        f"expected {expected}, got {resp.status_code}"
+    )
+
+
 # ---------------------------------------------------------------------------
 # 5. Full payment workflow under Cloudflare headers (no network calls)
 # ---------------------------------------------------------------------------
