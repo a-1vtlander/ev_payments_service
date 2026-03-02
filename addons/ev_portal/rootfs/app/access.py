@@ -64,7 +64,7 @@ _CLOUDFLARE_CIDRS: List[str] = [
     "2c0f:f248::/32",
 ]
 
-_CF_NETS: List[ipaddress.IPv4Network] = [ipaddress.ip_network(c, strict=False) for c in _CLOUDFLARE_CIDRS]
+_CF_NETS: List[ipaddress.ip_network] = [ipaddress.ip_network(c, strict=False) for c in _CLOUDFLARE_CIDRS]
 
 _DENY = Response("Access restricted", status_code=403, media_type="text/plain")
 
@@ -97,7 +97,10 @@ def _get_allow_nets() -> list:
 def _addr_in(ip_str: str, nets: list) -> bool:
     try:
         addr = ipaddress.ip_address(ip_str)
-        return any(addr in net for net in nets)
+        # Skip networks whose IP version doesn't match — comparing e.g. an IPv6
+        # address against an IPv4 network raises TypeError in Python's ipaddress
+        # module, which would propagate as an unhandled exception.
+        return any(addr in net for net in nets if net.version == addr.version)
     except ValueError:
         return False
 

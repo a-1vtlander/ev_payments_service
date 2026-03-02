@@ -427,6 +427,16 @@ async def test_access_control_invalid_cidr_skipped(
         # ── Exact host (/32) ─────────────────────────────────────────────
         ("100.64.0.1",    ["100.64.0.1/32"], 200),    # exact match
         ("100.64.0.2",    ["100.64.0.1/32"], 403),    # one address off
+        # ── IPv6 address against IPv4-only allow list — must 403, not crash ──
+        ("2605:59ca:3e71:8300::1", ["192.168.0.0/16"], 403),
+        # ── IPv6 address in matching IPv6 CIDR ───────────────────────────
+        ("2605:59ca:3e71:8300::1", ["2605:59ca::/32"], 200),
+        # ── IPv6 address not in IPv6 CIDR ────────────────────────────────
+        ("2001:db8::1",   ["2605:59ca::/32"], 403),
+        # ── Mixed IPv4+IPv6 allow list — IPv6 matches the IPv6 entry ─────
+        ("2605:59ca:3e71:8300::1", ["192.168.0.0/16", "2605:59ca::/32"], 200),
+        # ── Mixed IPv4+IPv6 allow list — IPv4 matches the IPv4 entry ─────
+        ("192.168.1.10",  ["192.168.0.0/16", "2605:59ca::/32"], 200),
     ],
 )
 async def test_access_control_cidr_range_and_multi(
