@@ -169,11 +169,49 @@
       (amountCents / 100).toFixed(2), currencyCode || 'USD');
 
     // Will throw if Apple Pay is unavailable (non-Safari, no enrolled card, HTTP).
-    const applePay = await payments.applePay(paymentRequest);
+    // Race against a 10s timeout — the SDK can hang silently when the domain
+    // association file is missing or unreachable, hiding the real error.
+    const _applePayTimeout = new Promise((_, reject) =>
+      setTimeout(() => reject(new Error(
+        'payments.applePay() timed out (10 s) — ' +
+        'check that /.well-known/apple-developer-merchantid-domain-association is reachable'
+      )), 10000)
+    );
+    const applePay = await Promise.race([payments.applePay(paymentRequest), _applePayTimeout]);
     console.log('[ApplePay] available — showing button');
 
-    // Only reveal the button now that we know Apple Pay is available.
+    // ── Reveal container ────────────────────────────────────────────────
+    console.log('[ApplePay] container BEFORE: inline style.display="%s"  offsetWidth=%s  offsetHeight=%s',
+      applePayContainer.style.display, applePayContainer.offsetWidth, applePayContainer.offsetHeight);
+
     applePayContainer.style.display = 'block';
+
+    console.log('[ApplePay] container AFTER:  inline style.display="%s"  offsetWidth=%s  offsetHeight=%s',
+      applePayContainer.style.display, applePayContainer.offsetWidth, applePayContainer.offsetHeight);
+
+    const cs    = window.getComputedStyle(applePayContainer);
+    const btnCs = window.getComputedStyle(applePayBtn);
+    const rect  = applePayContainer.getBoundingClientRect();
+    console.log('[ApplePay] container computed: display=%s  visibility=%s  opacity=%s  height=%s  overflow=%s',
+      cs.display, cs.visibility, cs.opacity, cs.height, cs.overflow);
+    console.log('[ApplePay] container rect: top=%s  left=%s  width=%s  height=%s  inViewport=%s',
+      rect.top.toFixed(0), rect.left.toFixed(0), rect.width.toFixed(0), rect.height.toFixed(0),
+      (rect.width > 0 && rect.height > 0));
+    console.log('[ApplePay] button computed: display=%s  visibility=%s  height=%s  width=%s  appearance=%s',
+      btnCs.display, btnCs.visibility, btnCs.height, btnCs.width,
+      btnCs.webkitAppearance || btnCs.appearance || '(none)');
+
+    // Walk ancestors and flag any that are hidden.
+    let _node = applePayContainer.parentElement;
+    while (_node && _node !== document.body) {
+      const _cs = window.getComputedStyle(_node);
+      if (_cs.display === 'none' || _cs.visibility === 'hidden' || _cs.opacity === '0') {
+        console.warn('[ApplePay] HIDDEN ANCESTOR: <%s id="%s" class="%s">  display=%s  visibility=%s  opacity=%s',
+          _node.tagName.toLowerCase(), _node.id, _node.className,
+          _cs.display, _cs.visibility, _cs.opacity);
+      }
+      _node = _node.parentElement;
+    }
 
     applePayBtn.addEventListener('click', async () => {
       status.textContent = 'Opening Apple Pay…';
