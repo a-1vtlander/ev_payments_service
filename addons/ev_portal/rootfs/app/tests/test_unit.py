@@ -396,6 +396,47 @@ async def test_submit_payment_idempotent_return(unit_client: AsyncClient, tmp_db
 
 
 # ---------------------------------------------------------------------------
+# /submit_payment – Apple Pay must NOT call create_card
+# The Square SDK returns details.method as "Apple Pay" (mixed case, space).
+# The server normalises to "APPLE_PAY" before the wallet check, so create_card
+# must never be called regardless of the casing the JS sends.
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("raw_method", ["Apple Pay", "APPLE PAY", "APPLE_PAY", "apple pay"])
+async def test_submit_payment_apple_pay_never_calls_create_card(
+    unit_client: AsyncClient, raw_method: str
+) -> None:
+    """create_card must NOT be called for any Apple Pay method string variant."""
+    uid = str(uuid.uuid4())
+    state._pending_sessions[uid] = {"booking_id": TEST_BOOKING_ID, "amount_cents": 100}
+
+    payment = {
+        "id": "pay_ap_1", "status": "APPROVED",
+        "card_details": {"card": {"card_brand": "APPLE_PAY", "last_4": ""}},
+    }
+    mock_create_card = AsyncMock()
+    with (
+        patch("square.create_card", new=mock_create_card),
+        patch("square.create_payment_authorization", new=AsyncMock(return_value=payment)),
+    ):
+        asyncio.create_task(
+            push_after(state._topic_queues[AUTHORIZE_RESPONSE_TOPIC], make_authorize_response())
+        )
+        resp = await unit_client.post("/submit_payment", data={
+            "source_id":      "apple-pay-token",
+            "uid":            uid,
+            "given_name":     "Jane",
+            "family_name":    "Smith",
+            "payment_method": raw_method,
+        })
+
+    mock_create_card.assert_not_called(), \
+        f"create_card must not be called for payment_method={raw_method!r}"
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "success"
+
+
+# ---------------------------------------------------------------------------
 # /submit_payment – Square card error
 # ---------------------------------------------------------------------------
 

@@ -111,6 +111,9 @@
     fd.append('family_name',    familyName);
     fd.append('payment_method', paymentMethod);
 
+    console.log('[submitToken] POST %s  payment_method=%s  token_prefix=%s',
+      submitUrl, paymentMethod, token ? token.slice(0, 8) : '(empty)');
+
     let resp, result;
     try {
       resp = await fetch(submitUrl, { method: 'POST', body: fd });
@@ -237,8 +240,8 @@
         return;
       }
 
-      console.log('[ApplePay] tokenize OK — submitting token, method=%s',
-        (tokenResult.details && tokenResult.details.method) || 'APPLE_PAY');
+      const _rawMethod = (tokenResult.details && tokenResult.details.method) || '';
+      console.log('[ApplePay] tokenize OK — raw method=%s  (will send as payment_method)', _rawMethod || '(empty — fallback: APPLE_PAY)');
       status.textContent = 'Processing Apple Pay…';
 
       const billing    = (tokenResult.details && tokenResult.details.billing) || {};
@@ -247,7 +250,7 @@
       const familyName = billing.familyName ||
                          document.getElementById('family-name').value.trim() || 'Customer';
 
-      const method = (tokenResult.details && tokenResult.details.method) || 'APPLE_PAY';
+      const method = _rawMethod || 'APPLE_PAY';
       await submitToken(tokenResult.token, givenName, familyName, msg => {
         console.error('[ApplePay] submitToken error:', msg);
         showBanner(msg);

@@ -42,7 +42,9 @@ async def submit_payment(
     try:
         return await _submit_payment_impl(
             source_id, uid, given_name, family_name,
-            payment_method=payment_method.upper().strip(),
+            # Normalise: "Apple Pay" → "APPLE_PAY", "Google Pay" → "GOOGLE_PAY"
+            payment_method=payment_method.upper().strip().replace(' ', '_'),
+            raw_payment_method=payment_method,
         )
     except Exception as exc:
         log.exception("Unhandled error in submit_payment")
@@ -52,11 +54,14 @@ async def submit_payment(
         )
 
 
-async def _submit_payment_impl(source_id, uid, given_name, family_name, payment_method="CARD"):
+async def _submit_payment_impl(source_id, uid, given_name, family_name, payment_method="CARD", raw_payment_method=""):
     is_wallet = payment_method in _DIGITAL_WALLET_METHODS
     log.info(
-        "submit_payment: uid=%r given_name=%r family_name=%r payment_method=%r  source_id_prefix=%r",
-        uid, given_name, family_name, payment_method, source_id[:8] if source_id else None,
+        "submit_payment: uid=%r given_name=%r family_name=%r "
+        "payment_method_raw=%r  payment_method_normalised=%r  is_wallet=%s  source_id_prefix=%r",
+        uid, given_name, family_name,
+        raw_payment_method or payment_method, payment_method, is_wallet,
+        source_id[:8] if source_id else None,
     )
 
     # 1. Validate session UID; fall back to DB to recover sessions after restart
