@@ -171,6 +171,33 @@ async def test_start_page_has_apple_pay_button(unit_client: AsyncClient, mock_mq
     assert 'id="apple-pay-container"' in resp.text
 
 
+def test_apple_pay_container_hidden_by_default_in_css() -> None:
+    """portal.css must set display:none on #apple-pay-container so the JS
+    reveal (display='block') is the only way it becomes visible."""
+    from pathlib import Path
+    css = (Path(__file__).parent.parent / "static" / "css" / "portal.css").read_text()
+    # Find the rule block for #apple-pay-container and assert display:none is inside it.
+    import re
+    match = re.search(r'#apple-pay-container\s*\{([^}]*)\}', css)
+    assert match, "#apple-pay-container rule not found in portal.css"
+    assert 'display' in match.group(1), \
+        "#apple-pay-container rule in portal.css must set 'display'"
+    assert 'none' in match.group(1), \
+        "#apple-pay-container must default to display:none in portal.css so JS controls visibility"
+
+
+def test_apple_pay_js_reveals_container_with_explicit_display_block() -> None:
+    """payment.js must set style.display='block' (not '') to override the CSS
+    display:none rule on #apple-pay-container."""
+    from pathlib import Path
+    js = (Path(__file__).parent.parent / "static" / "js" / "payment.js").read_text()
+    # Must not use the '' form which would hand control back to the CSS rule.
+    assert "applePayContainer.style.display = ''" not in js, \
+        "payment.js must not use style.display='' — it leaves display:none in effect"
+    assert "applePayContainer.style.display = 'block'" in js, \
+        "payment.js must use style.display='block' to override the CSS display:none rule"
+
+
 async def test_start_page_payment_config_includes_amount_cents(
     unit_client: AsyncClient, mock_mqtt: MagicMock
 ) -> None:

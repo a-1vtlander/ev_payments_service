@@ -173,7 +173,7 @@
     console.log('[ApplePay] available — showing button');
 
     // Only reveal the button now that we know Apple Pay is available.
-    applePayContainer.style.display = '';
+    applePayContainer.style.display = 'block';
 
     applePayBtn.addEventListener('click', async () => {
       status.textContent = 'Opening Apple Pay…';
