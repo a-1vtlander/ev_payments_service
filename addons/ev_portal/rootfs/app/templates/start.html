@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=0.9">
   <title>EV Charging</title>
   <link rel="icon" href="data:,">
-  <link rel="stylesheet" href="/static/css/portal.css">
+  <link rel="stylesheet" href="/static/css/portal.css?v={{ css_v }}">
   <script type="text/javascript" src="{{ js_url }}"></script>
   <script>
     /* Polyfill: some WebExtension environments expose a `browser` global that
@@ -109,6 +109,6 @@
       debugMode:    {{ debug_mode   | tojson }}
     };
   </script>
-  <script src="/static/js/payment.js"></script>
+  <script src="/static/js/payment.js?v={{ payment_js_v }}"></script>
 </body>
 </html>

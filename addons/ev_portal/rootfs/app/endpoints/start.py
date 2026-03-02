@@ -1,8 +1,10 @@
 import asyncio
+import hashlib
 import html
 import json
 import logging
 import uuid
+from pathlib import Path
 
 import db
 from endpoints.session import render_session_page
@@ -16,6 +18,17 @@ import square
 from portal_templates import templates
 
 log = logging.getLogger(__name__)
+
+_STATIC_DIR = Path(__file__).parent.parent / "static"
+
+
+def _file_hash(path: Path, length: int = 8) -> str:
+    """Return the first `length` hex chars of the MD5 of a file's contents.
+    Used as a cache-busting query parameter for static assets."""
+    try:
+        return hashlib.md5(path.read_bytes()).hexdigest()[:length]
+    except OSError:
+        return "0"
 
 
 def render_card_form(
@@ -58,6 +71,8 @@ def render_card_form(
     _debug_mode = state._app_config.get("debug_mode", False)
     if _debug_mode:
         log.info("render_card_form: debug_mode=True — client diagnostic overlay enabled")
+    _payment_js_v = _file_hash(_STATIC_DIR / "js" / "payment.js")
+    _css_v        = _file_hash(_STATIC_DIR / "css" / "portal.css")
     return templates.TemplateResponse(
         request,
         "start.html",
@@ -79,6 +94,8 @@ def render_card_form(
             "booking_end_display": booking_end_display,
             "rate_display":        rate_display,
             "debug_mode":          _debug_mode,
+            "payment_js_v":        _payment_js_v,
+            "css_v":               _css_v,
         },
     )
 
