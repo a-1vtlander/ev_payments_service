@@ -15,35 +15,42 @@
   const cfg = window.PAYMENT_CONFIG || {};
   const { appId, locationId, sessionUid, submitUrl, amountCents, currencyCode } = cfg;
 
-  console.log(
-    '[SDK] PAYMENT_CONFIG: appId=%s  locationId=%s  amountCents=%s  submitUrl=%s  sessionUid=%s',
-    appId   || '(EMPTY)',
-    locationId || '(EMPTY)',
-    amountCents,
-    submitUrl  || '(EMPTY)',
-    sessionUid || '(EMPTY)',
-  );
-
-  // ── Debug overlay: proxy console → on-page div (only when server sets debug_mode: true) ──
+  // ── Debug overlay: proxy console → on-page div when server sets debug_mode: true ──
+  // Must be installed FIRST so every subsequent console call is captured.
   if (cfg.debugMode) {
-    const _dbgEl = document.getElementById('pay-debug');
-    if (_dbgEl) {
+    const _dbgBox  = document.getElementById('pay-debug');
+    const _dbgMsgs = document.getElementById('pay-debug-msgs');
+    if (_dbgBox && _dbgMsgs) {
+      const _colours = { log: '#0f0', warn: '#ff0', error: '#f66' };
       ['log', 'warn', 'error'].forEach(method => {
         const _orig = console[method].bind(console);
         console[method] = (...args) => {
           _orig(...args);
-          const msg = args.map(a =>
-            a instanceof Error   ? String(a) :
+          const text = args.map(a =>
+            a instanceof Error    ? a.toString() :
             typeof a === 'object' && a !== null ? JSON.stringify(a) :
             String(a)
           ).join(' ');
-          _dbgEl.style.display = '';
-          _dbgEl.textContent  += `[${method.toUpperCase()}] ${msg}\n`;
-          _dbgEl.scrollTop     = _dbgEl.scrollHeight;
+          const line = document.createElement('div');
+          line.style.color = _colours[method] || '#0f0';
+          line.textContent = `[${method.toUpperCase()}] ${text}`;
+          _dbgMsgs.appendChild(line);
+          _dbgBox.style.display = '';
+          _dbgBox.scrollTop = _dbgBox.scrollHeight;
         };
       });
     }
   }
+
+  console.log(
+    '[SDK] PAYMENT_CONFIG: appId=%s  locationId=%s  amountCents=%s  submitUrl=%s  sessionUid=%s  debugMode=%s',
+    appId      || '(EMPTY)',
+    locationId || '(EMPTY)',
+    amountCents,
+    submitUrl  || '(EMPTY)',
+    sessionUid || '(EMPTY)',
+    cfg.debugMode || false,
+  );
 
   if (!appId)      console.error('[SDK] appId is missing — Square SDK will not initialise');
   if (!locationId) console.error('[SDK] locationId is missing — Square SDK will not initialise');

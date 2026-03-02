@@ -105,8 +105,10 @@
   <script src="/static/js/payment.js"></script>
 
   {% if debug_mode %}
-  <div id="pay-debug" style="display:none;position:fixed;bottom:0;left:0;right:0;background:#111;color:#0f0;font-family:monospace;font-size:11px;padding:6px 10px;max-height:150px;overflow-y:auto;z-index:9999;border-top:2px solid #0f0;white-space:pre-wrap;word-break:break-all;"><strong style="color:#ff0">[PAY DEBUG]</strong>
-</div>
+  <div id="pay-debug" style="display:none;position:fixed;bottom:0;left:0;right:0;background:#111;color:#0f0;font-family:monospace;font-size:11px;padding:6px 10px;max-height:180px;overflow-y:auto;z-index:9999;border-top:2px solid #0f0;">
+    <div style="color:#ff0;margin-bottom:3px;">&#9654; PAY DEBUG (debug_mode=true)</div>
+    <div id="pay-debug-msgs" style="white-space:pre-wrap;word-break:break-all;"></div>
+  </div>
   {% endif %}
 </body>
 </html>

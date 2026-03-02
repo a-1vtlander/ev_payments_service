@@ -189,6 +189,61 @@ async def test_start_page_payment_config_includes_amount_cents(
     assert "100" in resp.text
 
 
+async def test_start_page_debug_overlay_absent_by_default(
+    unit_client: AsyncClient, mock_mqtt: MagicMock
+) -> None:
+    """When debug_mode is not set the pay-debug div must not appear on the page."""
+    asyncio.create_task(
+        push_after(state._topic_queues[BOOKING_RESPONSE_TOPIC], make_booking_response())
+    )
+    # Ensure debug_mode is absent (default fixture sets no debug_mode key)
+    state._app_config.pop("debug_mode", None)
+    resp = await unit_client.get("/start")
+    assert resp.status_code == 200
+    assert 'id="pay-debug"'      not in resp.text
+    assert 'id="pay-debug-msgs"' not in resp.text
+    assert 'debugMode:    false'  in resp.text or 'debugMode: false' in resp.text or '"debugMode":false' in resp.text.replace(' ', '')
+
+
+async def test_start_page_debug_overlay_present_when_enabled(
+    unit_client: AsyncClient, mock_mqtt: MagicMock
+) -> None:
+    """When debug_mode=True the pay-debug overlay divs must appear on the page."""
+    asyncio.create_task(
+        push_after(state._topic_queues[BOOKING_RESPONSE_TOPIC], make_booking_response())
+    )
+    state._app_config["debug_mode"] = True
+    try:
+        resp = await unit_client.get("/start")
+    finally:
+        state._app_config.pop("debug_mode", None)
+    assert resp.status_code == 200
+    assert 'id="pay-debug"'      in resp.text
+    assert 'id="pay-debug-msgs"' in resp.text
+    # PAYMENT_CONFIG must also carry debugMode: true so the JS proxy activates
+    assert 'debugMode' in resp.text
+    assert 'true' in resp.text
+
+
+async def test_start_page_payment_config_debug_mode_true_when_set(
+    unit_client: AsyncClient, mock_mqtt: MagicMock
+) -> None:
+    """debugMode in PAYMENT_CONFIG must be true when debug_mode is enabled."""
+    asyncio.create_task(
+        push_after(state._topic_queues[BOOKING_RESPONSE_TOPIC], make_booking_response())
+    )
+    state._app_config["debug_mode"] = True
+    try:
+        resp = await unit_client.get("/start")
+    finally:
+        state._app_config.pop("debug_mode", None)
+    assert resp.status_code == 200
+    import re
+    # debugMode: true must appear in the inline PAYMENT_CONFIG block
+    assert re.search(r'debugMode\s*:\s*true', resp.text), \
+        "PAYMENT_CONFIG.debugMode should be true when debug_mode is enabled"
+
+
 async def test_start_publishes_to_correct_topic(
     unit_client: AsyncClient, mock_mqtt: MagicMock
 ) -> None:
