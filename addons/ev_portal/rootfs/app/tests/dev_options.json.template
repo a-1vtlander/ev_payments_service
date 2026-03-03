@@ -10,7 +10,6 @@
   "square_sandbox_access_token": "EAAAlwYOUR_SANDBOX_ACCESS_TOKEN_HERE",
   "square_production_app_id": "",
   "square_production_access_token": "",
-  "square_location_id": "",
   "square_charge_cents": 100,
   "admin_enabled": true,
   "admin_username": "admin",

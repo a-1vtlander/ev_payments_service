@@ -55,13 +55,11 @@ async def sandbox_square_config():
         "sandbox":      True,          # always sandbox
         "app_id":       opts["square_sandbox_app_id"],
         "access_token": opts["square_sandbox_access_token"],
-        "location_id":  opts.get("square_location_id") or "",
+        "location_id":  "",  # fetched below
         "charge_cents": opts.get("square_charge_cents", 100),
     }
 
-    # Auto-fetch location_id if not set
-    if not state._square_config["location_id"]:
-        state._square_config["location_id"] = await square.fetch_first_location_id()
+    state._square_config["location_id"] = await square.fetch_first_location_id()
 
     yield
 

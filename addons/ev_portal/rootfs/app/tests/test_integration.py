@@ -127,7 +127,6 @@ async def live_client(mosquitto_broker, tmp_path: Path, monkeypatch):
         "square_sandbox_access_token": "EAAAtest_integration_token",
         "square_production_app_id":    "",
         "square_production_access_token": "",
-        "square_location_id":          "LTEST00000000",
         "square_charge_cents":         100,
         "admin_enabled":               True,
         "admin_username":              "admin",
@@ -140,6 +139,15 @@ async def live_client(mosquitto_broker, tmp_path: Path, monkeypatch):
     options_file.write_text(json.dumps(options))
     # Patch state.OPTIONS_PATH so config.load_config() reads the temp file.
     monkeypatch.setattr(s, "OPTIONS_PATH", str(options_file))
+
+    # Integration tests use a fake access token — mock out the Square API call
+    # so lifespan doesn't attempt a real network request to fetch location_id.
+    import lifespan as ls
+
+    async def _fake_location_id() -> str:
+        return "LTEST00000000"
+
+    monkeypatch.setattr(ls, "fetch_first_location_id", _fake_location_id)
 
     async with LifespanManager(m.app) as manager:
         # paho connects in a background thread via loop_start(); poll is_connected().

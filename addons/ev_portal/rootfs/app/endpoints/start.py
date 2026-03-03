@@ -216,7 +216,7 @@ async def start_session(request: Request):
         return HTMLResponse(content="Square access token not configured", status_code=503)
     if not state._square_config.get("location_id"):
         return HTMLResponse(
-            content="square_location_id is not set in options - update your config and restart",
+            content="Square location_id unavailable — check access token or Square account status",
             status_code=503,
         )
 

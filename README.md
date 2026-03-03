@@ -56,7 +56,6 @@ Required fields (must be set in the HA UI before the add-on will start):
 | `charger_id` | Charger identifier used in MQTT topic paths |
 | `square_app_id` | Square application ID |
 | `square_access_token` | Square access token |
-| `square_location_id` | Square location ID (leave blank to auto-fetch) |
 | `square_sandbox` | `true` for sandbox, `false` for production (default `true`) |
 | `square_charge_cents` | Pre-auth amount in cents (default `100`) |
 
@@ -119,7 +118,6 @@ uvicorn main:app --host 0.0.0.0 --port 8080 --reload --log-level info
   "square_sandbox": true,
   "square_app_id": "sandbox-sq0idb-XXXXXXXXXXXXXXXXXXXX",
   "square_access_token": "EAAAlw...",
-  "square_location_id": "",
   "square_charge_cents": 100
 }
 ```

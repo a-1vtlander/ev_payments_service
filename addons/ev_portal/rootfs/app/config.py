@@ -189,7 +189,7 @@ def load_config() -> Dict[str, Any]:
             "sandbox":      sandbox,
             "app_id":       app_id,
             "access_token": access_token,
-            "location_id":  (opts.get("square_location_id") or "").strip(),
+            "location_id":  "",  # always fetched from Square API at startup
             "charge_cents": charge_cents,
         },
         "app": {

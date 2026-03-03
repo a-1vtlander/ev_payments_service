@@ -53,10 +53,7 @@ async def lifespan(app: FastAPI):
 
     # ── Square config ──────────────────────────────────────────────────────
     state._square_config = cfg["square"]
-    log.info(
-        "Square sandbox=%s  location_id=%r",
-        state._square_config["sandbox"], state._square_config["location_id"],
-    )
+    log.info("Square sandbox=%s", state._square_config["sandbox"])
 
     applepay_configured = bool(cfg["access"].get("applepay_domain_association"))
     log.info(
@@ -64,12 +61,12 @@ async def lifespan(app: FastAPI):
         "configured" if applepay_configured else "NOT configured — Apple Pay will be unavailable",
     )
 
-    if not state._square_config["location_id"] and state._square_config["access_token"]:
+    if state._square_config["access_token"]:
         try:
             state._square_config["location_id"] = await fetch_first_location_id()
-            log.info("Auto-fetched Square location_id: %s", state._square_config["location_id"])
+            log.info("Fetched Square location_id: %s", state._square_config["location_id"])
         except Exception as exc:
-            log.error("Could not auto-fetch Square location_id: %s", exc)
+            log.error("Could not fetch Square location_id: %s", exc)
 
     # ── Async primitives ───────────────────────────────────────────────────
     state._event_loop   = asyncio.get_running_loop()
