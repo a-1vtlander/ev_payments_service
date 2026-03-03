@@ -158,6 +158,39 @@
 
   console.log('[ApplePay] init: protocol=%s  userAgent=%s', location.protocol, navigator.userAgent);
 
+  // Formats a Square SDK error into a multi-line detail string.
+  // Square errors carry a .name (e.g. "UnexpectedError", "TokenizationError"),
+  // a .message, and an .errors[] array where each entry has {type, message, detail}.
+  const _fmtSqErr = (err) => {
+    if (!err) return '(null)';
+    const lines = [];
+    lines.push('name:    ' + (err.name    || typeof err));
+    lines.push('message: ' + (err.message || String(err)));
+    if (err.errors && err.errors.length) {
+      err.errors.forEach((e, i) => {
+        lines.push(`errors[${i}]: type=${e.type || '?'}  message=${e.message || '?'}  detail=${e.detail || '?'}`);
+      });
+    }
+    if (err.stack) {
+      lines.push('stack:   ' + err.stack.split('\n').slice(0, 5).join(' → '));
+    }
+    return lines.join('\n');
+  };
+
+  // Write a block of text directly into the debug overlay (independent of
+  // console proxying so it always appears even if the proxy wasn't set up).
+  const _dbgWrite = (label, text) => {
+    const box  = document.getElementById('pay-debug');
+    const msgs = document.getElementById('pay-debug-msgs');
+    if (!box || !msgs) return;
+    const block = document.createElement('div');
+    block.style.cssText = 'color:#f66;border-top:1px solid #333;margin-top:4px;padding-top:4px;white-space:pre-wrap;word-break:break-all';
+    block.textContent = '[' + label + ']\n' + text;
+    msgs.appendChild(block);
+    box.style.display = '';
+    box.scrollTop = box.scrollHeight;
+  };
+
   try {
     const paymentRequest = payments.paymentRequest({
       countryCode:  'US',
@@ -226,7 +259,9 @@
           tokenResult = await applePay.tokenize();
           console.log('[ApplePay] tokenize result: status=%s', tokenResult && tokenResult.status);
         } catch (err) {
-          console.error('[ApplePay] tokenize threw:', err && (err.stack || err.message || err));
+          const detail = _fmtSqErr(err);
+          console.error('[ApplePay] tokenize threw:\n' + detail);
+          if (cfg.debugMode) _dbgWrite('ApplePay tokenize error', detail);
           showBanner('Apple Pay error: ' + (err && (err.message || String(err))));
           status.textContent = '';
           return;
@@ -262,14 +297,10 @@
         // Catch-all: any unexpected throw inside the click handler — null refs,
         // SDK bugs, etc. — must surface rather than silently vanishing as an
         // unhandled promise rejection (invisible on mobile Safari).
-        const detail = err && (err.stack || err.message || String(err));
-        console.error('[ApplePay] unexpected error in click handler:', detail);
-        // Show the full error in the banner — err.message alone is often empty
-        // or just "Error"; err.stack or String(err) gives the type + message.
-        const bannerDetail = (err && err.stack)
-          ? err.stack.split('\n').slice(0, 3).join(' | ')
-          : String(err && (err.message || err));
-        showBanner('Apple Pay error: ' + bannerDetail);
+        const detail = _fmtSqErr(err);
+        console.error('[ApplePay] unexpected error in click handler:\n' + detail);
+        if (cfg.debugMode) _dbgWrite('ApplePay click error', detail);
+        showBanner('Apple Pay error: ' + (err && (err.message || String(err))));
         if (status) status.textContent = '';
       }
     });
@@ -277,17 +308,10 @@
   } catch (err) {
     // Apple Pay unavailable — container stays hidden (display:none set in CSS).
     // Common reasons: non-Safari browser, no enrolled card, served over HTTP,
-    // Square SDK not loaded, domain association file missing or unreachable,
-    // appId/locationId mismatch between sandbox and production.
-    const errDetail = (err && err.stack) ? err.stack : String(err && (err.message || err));
-    console.error('[ApplePay] init failed — button hidden.\nReason:', errDetail);
-    if (cfg.debugMode) {
-      const statusEl = document.getElementById('payment-status');
-      if (statusEl) {
-        statusEl.style.color = '#c00';
-        statusEl.textContent = '[ApplePay init failed] ' + (err && (err.message || String(err)));
-      }
-    }
+    // Square SDK not loaded, domain association file missing or unreachable.
+    const detail = _fmtSqErr(err);
+    console.error('[ApplePay] init failed — button hidden.\n' + detail);
+    if (cfg.debugMode) _dbgWrite('ApplePay init failed', detail);
   }
 
   // ── Card form ───────────────────────────────────────────────────────────
