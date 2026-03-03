@@ -103,21 +103,9 @@ def load_config() -> Dict[str, Any]:
             "shown on the payment page. Disable in production."
         )
 
-    # Apple Pay domain association file — two separate keys for sandbox vs production.
-    # Falls back to the legacy single key for existing installs that haven't migrated.
-    # Content is preserved exactly, not stripped (opaque binary-as-text from Square).
-    if sandbox:
-        applepay_domain_association: str = (
-            opts.get("applepay_sandbox_domain_association")
-            or opts.get("applepay_domain_association")
-            or ""
-        )
-    else:
-        applepay_domain_association: str = (
-            opts.get("applepay_production_domain_association")
-            or opts.get("applepay_domain_association")
-            or ""
-        )
+    # Apple Pay domain association file content – preserved exactly, not stripped
+    # (not logged – content is opaque binary-as-text from Square)
+    applepay_domain_association: str = opts.get("applepay_domain_association") or ""
 
     # Access control: list of allowed CIDRs.  When empty / absent → no filtering.
     # Handles three forms users may supply:

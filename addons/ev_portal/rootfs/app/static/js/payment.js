@@ -158,39 +158,6 @@
 
   console.log('[ApplePay] init: protocol=%s  userAgent=%s', location.protocol, navigator.userAgent);
 
-  // Formats a Square SDK error into a multi-line detail string.
-  // Square errors carry a .name (e.g. "UnexpectedError", "TokenizationError"),
-  // a .message, and an .errors[] array where each entry has {type, message, detail}.
-  const _fmtSqErr = (err) => {
-    if (!err) return '(null)';
-    const lines = [];
-    lines.push('name:    ' + (err.name    || typeof err));
-    lines.push('message: ' + (err.message || String(err)));
-    if (err.errors && err.errors.length) {
-      err.errors.forEach((e, i) => {
-        lines.push(`errors[${i}]: type=${e.type || '?'}  message=${e.message || '?'}  detail=${e.detail || '?'}`);
-      });
-    }
-    if (err.stack) {
-      lines.push('stack:   ' + err.stack.split('\n').slice(0, 5).join(' → '));
-    }
-    return lines.join('\n');
-  };
-
-  // Write a block of text directly into the debug overlay (independent of
-  // console proxying so it always appears even if the proxy wasn't set up).
-  const _dbgWrite = (label, text) => {
-    const box  = document.getElementById('pay-debug');
-    const msgs = document.getElementById('pay-debug-msgs');
-    if (!box || !msgs) return;
-    const block = document.createElement('div');
-    block.style.cssText = 'color:#f66;border-top:1px solid #333;margin-top:4px;padding-top:4px;white-space:pre-wrap;word-break:break-all';
-    block.textContent = '[' + label + ']\n' + text;
-    msgs.appendChild(block);
-    box.style.display = '';
-    box.scrollTop = box.scrollHeight;
-  };
-
   try {
     const paymentRequest = payments.paymentRequest({
       countryCode:  'US',
@@ -250,68 +217,52 @@
     }
 
     applePayBtn.addEventListener('click', async () => {
+      status.textContent = 'Opening Apple Pay…';
+      console.log('[ApplePay] tokenize: starting');
+
+      let tokenResult;
       try {
-        status.textContent = 'Opening Apple Pay…';
-        console.log('[ApplePay] tokenize: starting');
-
-        let tokenResult;
-        try {
-          tokenResult = await applePay.tokenize();
-          console.log('[ApplePay] tokenize result: status=%s', tokenResult && tokenResult.status);
-        } catch (err) {
-          const detail = _fmtSqErr(err);
-          console.error('[ApplePay] tokenize threw:\n' + detail);
-          if (cfg.debugMode) _dbgWrite('ApplePay tokenize error', detail);
-          showBanner('Apple Pay error: ' + (err && (err.message || String(err))));
-          status.textContent = '';
-          return;
-        }
-
-        if (!tokenResult || tokenResult.status !== 'OK') {
-          const errs = ((tokenResult && tokenResult.errors) || []).map(e => e.message).join(', ');
-          console.warn('[ApplePay] tokenize failed: status=%s  errors=%s',
-            tokenResult && tokenResult.status, errs || '(none)');
-          showBanner(errs || 'Apple Pay was cancelled or failed.');
-          status.textContent = '';
-          return;
-        }
-
-        const _rawMethod = (tokenResult.details && tokenResult.details.method) || '';
-        console.log('[ApplePay] tokenize OK — raw method=%s  (will send as payment_method)', _rawMethod || '(empty — fallback: APPLE_PAY)');
-        status.textContent = 'Processing Apple Pay…';
-
-        const billing    = (tokenResult.details && tokenResult.details.billing) || {};
-        const givenNameEl  = document.getElementById('given-name');
-        const familyNameEl = document.getElementById('family-name');
-        const givenName  = billing.givenName  || (givenNameEl  && givenNameEl.value.trim())  || 'Apple Pay';
-        const familyName = billing.familyName || (familyNameEl && familyNameEl.value.trim()) || 'Customer';
-
-        const method = _rawMethod || 'APPLE_PAY';
-        await submitToken(tokenResult.token, givenName, familyName, msg => {
-          console.error('[ApplePay] submitToken error:', msg);
-          showBanner(msg);
-          status.textContent = '';
-        }, method);
-
+        tokenResult = await applePay.tokenize();
+        console.log('[ApplePay] tokenize result: status=%s', tokenResult && tokenResult.status);
       } catch (err) {
-        // Catch-all: any unexpected throw inside the click handler — null refs,
-        // SDK bugs, etc. — must surface rather than silently vanishing as an
-        // unhandled promise rejection (invisible on mobile Safari).
-        const detail = _fmtSqErr(err);
-        console.error('[ApplePay] unexpected error in click handler:\n' + detail);
-        if (cfg.debugMode) _dbgWrite('ApplePay click error', detail);
-        showBanner('Apple Pay error: ' + (err && (err.message || String(err))));
-        if (status) status.textContent = '';
+        console.error('[ApplePay] tokenize threw:', err);
+        showBanner('Apple Pay error: ' + err.message);
+        status.textContent = '';
+        return;
       }
+
+      if (!tokenResult || tokenResult.status !== 'OK') {
+        const errs = ((tokenResult && tokenResult.errors) || []).map(e => e.message).join(', ');
+        console.warn('[ApplePay] tokenize failed: status=%s  errors=%s',
+          tokenResult && tokenResult.status, errs || '(none)');
+        showBanner(errs || 'Apple Pay was cancelled or failed.');
+        status.textContent = '';
+        return;
+      }
+
+      const _rawMethod = (tokenResult.details && tokenResult.details.method) || '';
+      console.log('[ApplePay] tokenize OK — raw method=%s  (will send as payment_method)', _rawMethod || '(empty — fallback: APPLE_PAY)');
+      status.textContent = 'Processing Apple Pay…';
+
+      const billing    = (tokenResult.details && tokenResult.details.billing) || {};
+      const givenName  = billing.givenName  ||
+                         document.getElementById('given-name').value.trim()  || 'Apple Pay';
+      const familyName = billing.familyName ||
+                         document.getElementById('family-name').value.trim() || 'Customer';
+
+      const method = _rawMethod || 'APPLE_PAY';
+      await submitToken(tokenResult.token, givenName, familyName, msg => {
+        console.error('[ApplePay] submitToken error:', msg);
+        showBanner(msg);
+        status.textContent = '';
+      }, method);
     });
 
   } catch (err) {
     // Apple Pay unavailable — container stays hidden (display:none set in CSS).
     // Common reasons: non-Safari browser, no enrolled card, served over HTTP,
-    // Square SDK not loaded, domain association file missing or unreachable.
-    const detail = _fmtSqErr(err);
-    console.error('[ApplePay] init failed — button hidden.\n' + detail);
-    if (cfg.debugMode) _dbgWrite('ApplePay init failed', detail);
+    // Square SDK not loaded, domain association file missing.
+    console.warn('[ApplePay] unavailable — button hidden. Reason:', err && (err.message || err));
   }
 
   // ── Card form ───────────────────────────────────────────────────────────
