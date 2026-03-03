@@ -225,7 +225,8 @@ async def start_session(request: Request):
     existing        = await db.get_session(idempotency_key)
     if existing and existing["state"] in ("AUTHORIZED", "CAPTURED"):
         log.info("Session already authorized for %s, rendering success page", idempotency_key)
-        return render_session_page(request, existing)
+        accrued_bill = parsed.get("accrued_bill")
+        return render_session_page(request, existing, accrued_bill=accrued_bill)
 
     # -- Generate one-time session UID for CSRF/spoof protection -----------
     session_uid = str(uuid.uuid4())

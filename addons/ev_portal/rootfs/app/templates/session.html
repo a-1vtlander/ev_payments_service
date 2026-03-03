@@ -38,6 +38,13 @@
   </div>
   {% endif %}
 
+  {% if accrued_bill_display %}
+  <div class="session-info-card">
+    <div class="label">Current Bill</div>
+    <div class="value">{{ accrued_bill_display }}</div>
+  </div>
+  {% endif %}
+
   {% if booking_end_display %}
   <div class="session-info-card">
     <div class="label">Charging Available Until</div>

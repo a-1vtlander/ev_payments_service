@@ -20,7 +20,7 @@ log = logging.getLogger(__name__)
 router = APIRouter()
 
 
-def render_session_page(request: Request, row: dict):
+def render_session_page(request: Request, row: dict, *, accrued_bill=None):
     """Render the 'EV Charger Enabled' confirmation page from a DB session row."""
     amount_cents = row.get("authorized_amount_cents") or 0
     card_brand   = str(row.get("card_brand") or "")
@@ -55,17 +55,25 @@ def render_session_page(request: Request, row: dict):
     except (ValueError, TypeError):
         booking_end_display = booking_end_time
 
+    accrued_bill_display = ""
+    if accrued_bill is not None:
+        try:
+            accrued_bill_display = f"${float(accrued_bill):.2f}"
+        except (ValueError, TypeError):
+            pass
+
     return templates.TemplateResponse(
         request,
         "session.html",
         {
-            "booking_id":          str(row.get("booking_id")        or ""),
-            "amount_display":      f"${amount_cents / 100:.2f} USD",
-            "payment_id":          str(row.get("square_payment_id") or ""),
-            "card_id":             str(row.get("square_card_id")    or ""),
-            "card_line":           card_line,
-            "guest_display":       guest_display,
-            "booking_end_display": booking_end_display,
+            "booking_id":           str(row.get("booking_id")        or ""),
+            "amount_display":       f"${amount_cents / 100:.2f} USD",
+            "payment_id":           str(row.get("square_payment_id") or ""),
+            "card_id":              str(row.get("square_card_id")    or ""),
+            "card_line":            card_line,
+            "guest_display":        guest_display,
+            "booking_end_display":  booking_end_display,
+            "accrued_bill_display": accrued_bill_display,
         },
     )
 
