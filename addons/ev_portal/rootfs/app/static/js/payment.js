@@ -217,52 +217,77 @@
     }
 
     applePayBtn.addEventListener('click', async () => {
-      status.textContent = 'Opening Apple Pay…';
-      console.log('[ApplePay] tokenize: starting');
-
-      let tokenResult;
       try {
-        tokenResult = await applePay.tokenize();
-        console.log('[ApplePay] tokenize result: status=%s', tokenResult && tokenResult.status);
+        status.textContent = 'Opening Apple Pay…';
+        console.log('[ApplePay] tokenize: starting');
+
+        let tokenResult;
+        try {
+          tokenResult = await applePay.tokenize();
+          console.log('[ApplePay] tokenize result: status=%s', tokenResult && tokenResult.status);
+        } catch (err) {
+          console.error('[ApplePay] tokenize threw:', err && (err.stack || err.message || err));
+          showBanner('Apple Pay error: ' + (err && (err.message || String(err))));
+          status.textContent = '';
+          return;
+        }
+
+        if (!tokenResult || tokenResult.status !== 'OK') {
+          const errs = ((tokenResult && tokenResult.errors) || []).map(e => e.message).join(', ');
+          console.warn('[ApplePay] tokenize failed: status=%s  errors=%s',
+            tokenResult && tokenResult.status, errs || '(none)');
+          showBanner(errs || 'Apple Pay was cancelled or failed.');
+          status.textContent = '';
+          return;
+        }
+
+        const _rawMethod = (tokenResult.details && tokenResult.details.method) || '';
+        console.log('[ApplePay] tokenize OK — raw method=%s  (will send as payment_method)', _rawMethod || '(empty — fallback: APPLE_PAY)');
+        status.textContent = 'Processing Apple Pay…';
+
+        const billing    = (tokenResult.details && tokenResult.details.billing) || {};
+        const givenNameEl  = document.getElementById('given-name');
+        const familyNameEl = document.getElementById('family-name');
+        const givenName  = billing.givenName  || (givenNameEl  && givenNameEl.value.trim())  || 'Apple Pay';
+        const familyName = billing.familyName || (familyNameEl && familyNameEl.value.trim()) || 'Customer';
+
+        const method = _rawMethod || 'APPLE_PAY';
+        await submitToken(tokenResult.token, givenName, familyName, msg => {
+          console.error('[ApplePay] submitToken error:', msg);
+          showBanner(msg);
+          status.textContent = '';
+        }, method);
+
       } catch (err) {
-        console.error('[ApplePay] tokenize threw:', err);
-        showBanner('Apple Pay error: ' + err.message);
-        status.textContent = '';
-        return;
+        // Catch-all: any unexpected throw inside the click handler — null refs,
+        // SDK bugs, etc. — must surface rather than silently vanishing as an
+        // unhandled promise rejection (invisible on mobile Safari).
+        const detail = err && (err.stack || err.message || String(err));
+        console.error('[ApplePay] unexpected error in click handler:', detail);
+        // Show the full error in the banner — err.message alone is often empty
+        // or just "Error"; err.stack or String(err) gives the type + message.
+        const bannerDetail = (err && err.stack)
+          ? err.stack.split('\n').slice(0, 3).join(' | ')
+          : String(err && (err.message || err));
+        showBanner('Apple Pay error: ' + bannerDetail);
+        if (status) status.textContent = '';
       }
-
-      if (!tokenResult || tokenResult.status !== 'OK') {
-        const errs = ((tokenResult && tokenResult.errors) || []).map(e => e.message).join(', ');
-        console.warn('[ApplePay] tokenize failed: status=%s  errors=%s',
-          tokenResult && tokenResult.status, errs || '(none)');
-        showBanner(errs || 'Apple Pay was cancelled or failed.');
-        status.textContent = '';
-        return;
-      }
-
-      const _rawMethod = (tokenResult.details && tokenResult.details.method) || '';
-      console.log('[ApplePay] tokenize OK — raw method=%s  (will send as payment_method)', _rawMethod || '(empty — fallback: APPLE_PAY)');
-      status.textContent = 'Processing Apple Pay…';
-
-      const billing    = (tokenResult.details && tokenResult.details.billing) || {};
-      const givenName  = billing.givenName  ||
-                         document.getElementById('given-name').value.trim()  || 'Apple Pay';
-      const familyName = billing.familyName ||
-                         document.getElementById('family-name').value.trim() || 'Customer';
-
-      const method = _rawMethod || 'APPLE_PAY';
-      await submitToken(tokenResult.token, givenName, familyName, msg => {
-        console.error('[ApplePay] submitToken error:', msg);
-        showBanner(msg);
-        status.textContent = '';
-      }, method);
     });
 
   } catch (err) {
     // Apple Pay unavailable — container stays hidden (display:none set in CSS).
     // Common reasons: non-Safari browser, no enrolled card, served over HTTP,
-    // Square SDK not loaded, domain association file missing.
-    console.warn('[ApplePay] unavailable — button hidden. Reason:', err && (err.message || err));
+    // Square SDK not loaded, domain association file missing or unreachable,
+    // appId/locationId mismatch between sandbox and production.
+    const errDetail = (err && err.stack) ? err.stack : String(err && (err.message || err));
+    console.error('[ApplePay] init failed — button hidden.\nReason:', errDetail);
+    if (cfg.debugMode) {
+      const statusEl = document.getElementById('payment-status');
+      if (statusEl) {
+        statusEl.style.color = '#c00';
+        statusEl.textContent = '[ApplePay init failed] ' + (err && (err.message || String(err)));
+      }
+    }
   }
 
   // ── Card form ───────────────────────────────────────────────────────────
