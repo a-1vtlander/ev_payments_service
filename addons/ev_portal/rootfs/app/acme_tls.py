@@ -174,8 +174,7 @@ def _provision_cert(
         raise RuntimeError("ACME: no DNS-01 challenge found in order")
 
     txt_name  = f"_acme-challenge.{domain}"
-    txt_value = acme_client.client.net.key.thumbprint()  # computed below
-    txt_value = dns_challenge.validation(acme_client.client.net.key)
+    txt_value = dns_challenge.validation(acme_client.net.key)
 
     log.info("ACME: creating DNS TXT %s = %s", txt_name, txt_value)
     zone_id  = _cf_get_zone_id(cf_token, domain)
@@ -185,17 +184,10 @@ def _provision_cert(
         log.info("ACME: waiting %ds for DNS propagation…", DNS_PROPAGATION_WAIT)
         time.sleep(DNS_PROPAGATION_WAIT)
 
-        acme_client.answer_challenge(dns_challenge, dns_challenge.response(acme_client.client.net.key))
+        acme_client.answer_challenge(dns_challenge, dns_challenge.response(acme_client.net.key))
 
-        # Poll for order completion
-        deadline = time.time() + 120
-        while time.time() < deadline:
-            order = acme_client.poll_order_and_request_issuance(csr_pem, order.authorizations)
-            if order.fullchain_pem:
-                break
-            time.sleep(5)
-        else:
-            raise RuntimeError("ACME: order did not complete within 120s")
+        # Poll until the CA has validated the challenge and issued the cert.
+        order = acme_client.poll_and_finalize(order)
 
     finally:
         log.info("ACME: cleaning up DNS TXT record %s", record_id)

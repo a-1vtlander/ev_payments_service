@@ -92,6 +92,7 @@ async def lifespan(app: FastAPI):
     # ── Background tasks ─────────────────────────────────────────────────────
     _finalize_task = asyncio.create_task(finalize_session_consumer())
 
+    log.info("=== Guest portal ready on port 8090 ===")
     yield
 
     # ── Shutdown ───────────────────────────────────────────────────────────────────
