@@ -369,7 +369,7 @@ def test_provision_cert_cf_cleanup_runs_even_on_error(tmp_path):
 
 @pytest.mark.acme
 @pytest.mark.asyncio
-async def test_acme_cert_provisioning_live(tmp_path):
+async def test_acme_cert_provisioning_live(tmp_path, request):
     """
     Full DNS-01 ACME flow against real Let's Encrypt + Cloudflare.
 
@@ -382,6 +382,12 @@ async def test_acme_cert_provisioning_live(tmp_path):
 
     WARNING: consumes a Let's Encrypt rate-limited issuance and takes ~60s.
     """
+    # Skip unless this test was explicitly requested via -m acme.
+    # Without this guard the test runs in the default suite, hits the real
+    # network, and fails (or burns a rate-limited LE issuance).
+    if "acme" not in request.config.option.markexpr:
+        pytest.skip("live ACME test only runs with: pytest -m acme")
+
     opts = json.loads(_OPTIONS_FILE.read_text())
     domain   = opts.get("keymgr_domain", "").strip()
     cf_token = opts.get("dns_cloudflare_api_token", "").strip()
