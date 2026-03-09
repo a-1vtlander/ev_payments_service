@@ -236,7 +236,13 @@ def _cf_get_zone_id(token: str, domain: str) -> str:
             headers=_cf_headers(token),
             timeout=15,
         )
-        r.raise_for_status()
+        # Cloudflare returns 400 when the supplied name is not a valid zone
+        # (e.g. a subdomain label).  That is not an error — continue walking
+        # up the label hierarchy.  Only raise on unexpected server errors.
+        if r.status_code >= 500:
+            r.raise_for_status()
+        if not r.is_success:
+            continue
         data = r.json()
         if data.get("result"):
             zone_id = data["result"][0]["id"]

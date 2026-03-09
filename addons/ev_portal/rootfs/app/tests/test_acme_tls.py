@@ -130,6 +130,8 @@ def test_cf_get_zone_id_calls_correct_endpoint():
     import httpx
     mock_resp = MagicMock()
     mock_resp.raise_for_status = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.is_success = True
     mock_resp.json.return_value = {"result": [{"id": "zone123"}]}
 
     with patch("httpx.get", return_value=mock_resp) as mock_get:
@@ -142,18 +144,23 @@ def test_cf_get_zone_id_calls_correct_endpoint():
 
 
 def test_cf_get_zone_id_walks_up_labels():
-    """Should try sub.example.com first, then example.com."""
+    """Should try sub.example.com first, then example.com.
+    Cloudflare returns 400 (not 200 with empty result) for unknown zone names."""
     call_count = 0
-    responses = [
-        {"result": []},          # sub.example.com — not found
-        {"result": [{"id": "z1"}]},  # example.com — found
-    ]
 
     def fake_get(url, **kwargs):
         nonlocal call_count
         resp = MagicMock()
         resp.raise_for_status = MagicMock()
-        resp.json.return_value = responses[call_count]
+        if call_count == 0:
+            # First attempt: CF returns 400 for an unknown subdomain name
+            resp.status_code = 400
+            resp.is_success = False
+            resp.json.return_value = {"result": []}
+        else:
+            resp.status_code = 200
+            resp.is_success = True
+            resp.json.return_value = {"result": [{"id": "z1"}]}
         call_count += 1
         return resp
 
