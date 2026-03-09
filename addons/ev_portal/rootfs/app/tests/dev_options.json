@@ -22,5 +22,6 @@
   "debug_mode": true,
   "ev_portal_domain": "baselander-ev.extravio.co",
   "keymgr_domain": "keymgr.baselander-ev.extravio.co",
-  "dns_cloudflare_api_token": "v1.0-57bb35b83409fc62dca1327c-8bdbce582a8ae12bb36599ecd50d3eff7379cbcb9bfbb2469e35023a9213205d1906feb4175f299fd6479694cecb35900dd8cd493574a313e9f23e98ef1ecaae1847a34f7ae2eada87"
+  "dns_cloudflare_api_token": "v1.0-57bb35b83409fc62dca1327c-8bdbce582a8ae12bb36599ecd50d3eff7379cbcb9bfbb2469e35023a9213205d1906feb4175f299fd6479694cecb35900dd8cd493574a313e9f23e98ef1ecaae1847a34f7ae2eada87",
+  "dns_cloudflare_zone_id": "e2974badaffc8c75c140e1e13c136129"
 }

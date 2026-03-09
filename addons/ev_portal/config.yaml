@@ -50,6 +50,7 @@ options:
   ev_portal_domain: ""      # Public hostname of the guest portal (e.g. baselander-ev.extravio.co) — used by keymgr to build the redirect URL after issuing a key
   keymgr_domain: ""         # Hostname of the key manager itself (e.g. keymgr.baselander-ev.extravio.co) — used to obtain a publicly-trusted TLS certificate via DNS-01 ACME
   dns_cloudflare_api_token: ""  # Cloudflare API token with DNS:Edit for the zone above
+  dns_cloudflare_zone_id: ""    # Cloudflare zone ID (e.g. a1b2c3…). When set, zone discovery is skipped and the token only needs DNS:Edit. Find it on the zone overview page in the Cloudflare dashboard.
   debug_mode: false
 
 schema:
@@ -79,4 +80,5 @@ schema:
   ev_portal_domain: str
   keymgr_domain: str
   dns_cloudflare_api_token: password
+  dns_cloudflare_zone_id: str
   debug_mode: bool

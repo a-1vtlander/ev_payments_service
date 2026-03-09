@@ -187,6 +187,7 @@ def load_config() -> Dict[str, Any]:
     ev_portal_domain: str = (opts.get("ev_portal_domain") or "").strip()
     keymgr_domain: str    = (opts.get("keymgr_domain") or "").strip()
     dns_cf_token: str     = (opts.get("dns_cloudflare_api_token") or "").strip()
+    dns_cf_zone_id: str   = (opts.get("dns_cloudflare_zone_id") or "").strip()
     if not ev_portal_domain:
         log.warning(
             "ev_portal_domain is not set — keymgr redirect will not work. "
@@ -236,6 +237,8 @@ def load_config() -> Dict[str, Any]:
             "ev_portal_domain":    ev_portal_domain,
             "domain":              keymgr_domain,
             "cloudflare_token":    dns_cf_token,
+            "cloudflare_zone_id": dns_cf_zone_id,
+        },
         },
     }
 

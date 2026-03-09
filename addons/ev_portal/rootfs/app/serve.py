@@ -117,6 +117,7 @@ async def _serve_all() -> None:
     keymgr_cfg    = cfg.get("keymgr", {})
     keymgr_domain = keymgr_cfg.get("domain", "").strip()
     cf_token      = keymgr_cfg.get("cloudflare_token", "").strip()
+    cf_zone_id    = keymgr_cfg.get("cloudflare_zone_id", "").strip()
 
     # Wire the guest-portal hostname into the keymgr router so it can build
     # the redirect URL after issuing a key.
@@ -127,7 +128,9 @@ async def _serve_all() -> None:
     if keymgr_domain and cf_token:
         try:
             from tls import TLS_DIR
-            km_cert, km_key = await acme_tls.ensure_acme_cert(keymgr_domain, cf_token, TLS_DIR)
+            km_cert, km_key = await acme_tls.ensure_acme_cert(
+                keymgr_domain, cf_token, TLS_DIR, cf_zone_id=cf_zone_id
+            )
             keymgr_kwargs = {"ssl_certfile": km_cert, "ssl_keyfile": km_key}
             log.info("Key manager using ACME cert for %s", keymgr_domain)
         except Exception as exc:

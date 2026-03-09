@@ -217,15 +217,15 @@ def test_cf_delete_txt_tolerates_404():
 # wrong method names for order polling, missing Key ID after ConflictError).
 # ---------------------------------------------------------------------------
 
-def _run_provision_cert(tmp_path, mock_acme_client, acct_conflict_location=None):
+def _run_provision_cert(tmp_path, mock_acme_client, acct_conflict_location=None, cf_zone_id=""):
     """
     Run _provision_cert with all ACME/CF calls mocked.
 
     If *acct_conflict_location* is set, new_account() raises ConflictError
     with that location string (simulating an already-registered account).
 
-    Returns (cert_path, key_path, mock_challenge) so callers can assert on
-    what the mocked client was called with.
+    Returns (cert_path, key_path, mock_challenge, mock_get_zone_id) so callers
+    can assert on what the mocked client was called with.
     """
     from acme import errors as acme_errors
 
@@ -262,25 +262,27 @@ def _run_provision_cert(tmp_path, mock_acme_client, acct_conflict_location=None)
 
     cert_path = str(tmp_path / "keymgr.crt")
     key_path  = str(tmp_path / "keymgr.key")
+    mock_get_zone_id = MagicMock(return_value="zone123")
 
     with patch("acme.client.ClientNetwork"), \
          patch("acme.client.ClientV2", mock_v2_cls), \
          patch("acme.challenges.DNS01", MockDNS01), \
          patch("acme.crypto_util.make_csr", return_value=b"fakecsr"), \
-         patch.object(acme_tls, "_cf_get_zone_id", return_value="zone123"), \
+         patch.object(acme_tls, "_cf_get_zone_id", mock_get_zone_id), \
          patch.object(acme_tls, "_cf_create_txt", return_value="rec456"), \
          patch.object(acme_tls, "_cf_delete_txt"), \
          patch("time.sleep"):
         acme_tls._provision_cert(
-            "test.example.com", "cf-token", str(tmp_path), cert_path, key_path
+            "test.example.com", "cf-token", str(tmp_path), cert_path, key_path,
+            cf_zone_id=cf_zone_id,
         )
 
-    return cert_path, key_path, mock_challenge
+    return cert_path, key_path, mock_challenge, mock_get_zone_id
 
 
 def test_provision_cert_writes_cert_to_disk(tmp_path):
     """Happy path: cert and key files are written after a successful order."""
-    cert_path, key_path, _ = _run_provision_cert(tmp_path, MagicMock())
+    cert_path, key_path, _, _z = _run_provision_cert(tmp_path, MagicMock())
     assert os.path.exists(cert_path), "cert file not written"
     assert os.path.exists(key_path), "key file not written"
 
@@ -295,7 +297,7 @@ def test_provision_cert_calls_poll_and_finalize(tmp_path):
 def test_provision_cert_answer_challenge_uses_net_key(tmp_path):
     """answer_challenge must use acme_client.net.key, not acme_client.client.net.key."""
     mock_client = MagicMock()
-    _, _, mock_challenge = _run_provision_cert(tmp_path, mock_client)
+    _, _, mock_challenge, _ = _run_provision_cert(tmp_path, mock_client)
     mock_challenge.response.assert_called_once_with(mock_client.net.key)
     mock_client.answer_challenge.assert_called_once_with(
         mock_challenge, mock_challenge.response.return_value
@@ -305,8 +307,19 @@ def test_provision_cert_answer_challenge_uses_net_key(tmp_path):
 def test_provision_cert_validation_uses_net_key(tmp_path):
     """validation() (builds the TXT value) must also use acme_client.net.key."""
     mock_client = MagicMock()
-    _, _, mock_challenge = _run_provision_cert(tmp_path, mock_client)
+    _, _, mock_challenge, _ = _run_provision_cert(tmp_path, mock_client)
     mock_challenge.validation.assert_called_once_with(mock_client.net.key)
+
+
+def test_provision_cert_skips_zone_discovery_when_zone_id_supplied(tmp_path):
+    """When cf_zone_id is provided upfront, _cf_get_zone_id must NOT be called.
+    This means the token only needs DNS:Edit, not Zone:Read.
+    """
+    mock_client = MagicMock()
+    _, _, _, mock_get_zone_id = _run_provision_cert(
+        tmp_path, mock_client, cf_zone_id="supplied-zone-id"
+    )
+    mock_get_zone_id.assert_not_called()
 
 
 def test_provision_cert_conflict_error_sets_account_uri(tmp_path):

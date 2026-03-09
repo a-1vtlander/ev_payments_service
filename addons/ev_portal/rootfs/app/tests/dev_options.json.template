@@ -20,5 +20,6 @@
   "admin_tls_key_path": "",
   "ev_portal_domain": "",
   "keymgr_domain": "",
-  "dns_cloudflare_api_token": ""
+  "dns_cloudflare_api_token": "",
+  "dns_cloudflare_zone_id": ""
 }

@@ -36,10 +36,20 @@ DNS_PROPAGATION_WAIT = 30  # seconds to wait after creating TXT record
 # Public API
 # ---------------------------------------------------------------------------
 
-async def ensure_acme_cert(domain: str, cf_token: str, tls_dir: str) -> Tuple[str, str]:
+async def ensure_acme_cert(
+    domain: str,
+    cf_token: str,
+    tls_dir: str,
+    cf_zone_id: str = "",
+) -> Tuple[str, str]:
     """
     Return (cert_path, key_path) for *domain*, obtaining/renewing via ACME
     DNS-01 if necessary.
+
+    cf_zone_id: Cloudflare zone ID (e.g. "a1b2c3…").  When supplied the zone
+    discovery API call is skipped entirely — the token only needs DNS:Edit
+    permission.  When omitted the zone is discovered via GET /zones?name=…
+    which additionally requires Zone:Read permission.
 
     Raises RuntimeError if cert provisioning fails.
     """
@@ -52,7 +62,9 @@ async def ensure_acme_cert(domain: str, cf_token: str, tls_dir: str) -> Tuple[st
         return cert_path, key_path
 
     log.info("ACME: provisioning cert for %s via DNS-01 / Cloudflare", domain)
-    await asyncio.to_thread(_provision_cert, domain, cf_token, tls_dir, cert_path, key_path)
+    await asyncio.to_thread(
+        _provision_cert, domain, cf_token, tls_dir, cert_path, key_path, cf_zone_id
+    )
     log.info("ACME: cert for %s written to %s", domain, cert_path)
     return cert_path, key_path
 
@@ -98,6 +110,7 @@ def _provision_cert(
     tls_dir: str,
     cert_path: str,
     key_path: str,
+    cf_zone_id: str = "",
 ) -> None:
     import httpx
     import josepy as jose
@@ -185,7 +198,9 @@ def _provision_cert(
     txt_value = dns_challenge.validation(acme_client.net.key)
 
     log.info("ACME: creating DNS TXT %s = %s", txt_name, txt_value)
-    zone_id  = _cf_get_zone_id(cf_token, domain)
+    zone_id = cf_zone_id or _cf_get_zone_id(cf_token, domain)
+    if cf_zone_id:
+        log.info("ACME/CF: using supplied zone_id %s", zone_id)
     record_id = _cf_create_txt(cf_token, zone_id, txt_name, txt_value)
 
     try:
