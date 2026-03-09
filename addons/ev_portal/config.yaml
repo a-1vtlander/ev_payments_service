@@ -1,6 +1,6 @@
 name: "EV Charger Portal"
 description: "Payment Manager AddOn for EV Sessions - Uses LAN-local HTTPS portal via MQTT with an HTTPS admin server"
-version: "1.1.22"
+version: "1.1.23"
 slug: "ev_portal"
 init: false
 webui: https://[HOST]:[PORT:8091]/admin
@@ -46,6 +46,10 @@ options:
   admin_tls_mode: "self_signed"
   admin_tls_cert_path: ""
   admin_tls_key_path: ""
+  # Domain configuration
+  ev_portal_domain: ""      # Public hostname of the guest portal (e.g. baselander-ev.extravio.co) — used by keymgr to build the redirect URL after issuing a key
+  keymgr_domain: ""         # Hostname of the key manager itself (e.g. keymgr.baselander-ev.extravio.co) — used to obtain a publicly-trusted TLS certificate via DNS-01 ACME
+  dns_cloudflare_api_token: ""  # Cloudflare API token with DNS:Edit for the zone above
   debug_mode: false
 
 schema:
@@ -72,4 +76,7 @@ schema:
   admin_tls_mode: list(self_signed|provided)
   admin_tls_cert_path: str
   admin_tls_key_path: str
+  ev_portal_domain: str
+  keymgr_domain: str
+  dns_cloudflare_api_token: password
   debug_mode: bool

@@ -6,4 +6,5 @@ testpaths = ["tests"]
 markers = [
     "sandbox: tests that call the real Square sandbox API (requires network + valid token)",
     "e2e: full end-to-end tests (requires mosquitto on PATH + Square sandbox access)",
+    "acme: live ACME DNS-01 cert provisioning (requires keymgr_domain + dns_cloudflare_api_token in dev_options.json)",
 ]

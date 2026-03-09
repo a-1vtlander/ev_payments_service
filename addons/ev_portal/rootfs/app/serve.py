@@ -24,6 +24,7 @@ import uvicorn
 import state
 from config import load_config
 from tls import ensure_cert, ensure_guest_cert
+import acme_tls
 
 logging.basicConfig(
     level=logging.INFO,
@@ -84,6 +85,7 @@ async def _serve_all() -> None:
     servers = [uvicorn.Server(guest_config)]
 
     # ── Admin server (HTTPS) ───────────────────────────────────────────────
+    cert_path = key_path = None  # also used by keymgr below
     if admin_cfg["enabled"]:
         try:
             cert_path, key_path = ensure_cert(admin_cfg)
@@ -111,10 +113,41 @@ async def _serve_all() -> None:
 
     log.info("Guest server starting on http://0.0.0.0:%s  (plain HTTP; Cloudflare provides HTTPS at edge)", GUEST_PORT)
 
-    # ── Key manager server (HTTP in prod; HTTPS in dev when EV_GUEST_HTTPS=1) ──
+    # ── Key manager server — ACME cert preferred, falls back to admin/guest cert ─
+    keymgr_cfg    = cfg.get("keymgr", {})
+    keymgr_domain = keymgr_cfg.get("domain", "").strip()
+    cf_token      = keymgr_cfg.get("cloudflare_token", "").strip()
+
+    # Wire the guest-portal hostname into the keymgr router so it can build
+    # the redirect URL after issuing a key.
+    import keymgr.router as _km_router
+    _km_router.PORTAL_HOST = keymgr_cfg.get("ev_portal_domain", "").strip()
     keymgr_kwargs: dict = {}
-    if dev_https and guest_cert:
-        keymgr_kwargs = {"ssl_certfile": guest_cert, "ssl_keyfile": guest_key}
+
+    if keymgr_domain and cf_token:
+        try:
+            from tls import TLS_DIR
+            km_cert, km_key = await acme_tls.ensure_acme_cert(keymgr_domain, cf_token, TLS_DIR)
+            keymgr_kwargs = {"ssl_certfile": km_cert, "ssl_keyfile": km_key}
+            log.info("Key manager using ACME cert for %s", keymgr_domain)
+        except Exception as exc:
+            log.error(
+                "ACME cert provisioning failed for %s: %s — keymgr will try admin cert",
+                keymgr_domain, exc,
+            )
+
+    if not keymgr_kwargs:
+        if admin_cfg["enabled"] and cert_path:
+            keymgr_kwargs = {"ssl_certfile": cert_path, "ssl_keyfile": key_path}
+            log.info("Key manager falling back to admin TLS cert")
+        elif dev_https and guest_cert:
+            keymgr_kwargs = {"ssl_certfile": guest_cert, "ssl_keyfile": guest_key}
+            log.info("Key manager using guest dev TLS cert")
+        else:
+            log.warning(
+                "Key manager starting WITHOUT TLS — browsers will reject HTTPS connections to port %s",
+                KEYMGR_PORT,
+            )
     keymgr_config = uvicorn.Config(
         "keymgr.app:keymgr_app",
         host="0.0.0.0",

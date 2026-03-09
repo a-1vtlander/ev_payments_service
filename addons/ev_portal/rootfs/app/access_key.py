@@ -37,10 +37,11 @@ _DENY = Response(
 
 
 def _strip_key_param(url_str: str) -> str:
-    """Return the URL with the `key` query parameter removed."""
+    """Return the URL with both `key` and `access_key` query parameters removed."""
     parsed     = urlparse(url_str)
     params     = parse_qs(parsed.query, keep_blank_values=True)
     params.pop("key", None)
+    params.pop("access_key", None)
     new_query  = urlencode({k: v[0] for k, v in params.items()})
     return urlunparse(parsed._replace(query=new_query))
 
@@ -64,7 +65,11 @@ class AccessKeyMiddleware(BaseHTTPMiddleware):
             return await call_next(request)
 
         cookie_key = request.cookies.get(_COOKIE_NAME, "").strip()
-        query_key  = request.query_params.get("key", "").strip()
+        # Accept both ?key= (direct) and ?access_key= (forwarded from external portal)
+        query_key  = (
+            request.query_params.get("access_key", "")
+            or request.query_params.get("key", "")
+        ).strip()
 
         # Cookie check first (avoids a DB round-trip on every request once set).
         if cookie_key and await db.validate_access_key(cookie_key):

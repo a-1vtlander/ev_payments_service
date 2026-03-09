@@ -73,7 +73,7 @@ _LOGIN_PAGE_TMPL = """<!DOCTYPE html>
 <body>
   <h1>EV Portal Admin</h1>
   {error_block}
-  <form method="post" action="/admin/login">
+  <form method="post" action="{action_url}" target="_top">
     <label for="username">Username</label>
     <input type="text" id="username" name="username" autocomplete="username" autofocus required>
     <label for="password">Password</label>
@@ -96,18 +96,23 @@ async def login_page(request: Request, error: int = 0):
         '<div class="error">Invalid username or password. Please try again.</div>'
         if error else ""
     )
-    return _LOGIN_PAGE_TMPL.format(error_block=error_block)
+    # Build absolute action URL so the POST reaches the right origin whether the
+    # page is loaded directly, behind a reverse proxy, or inside an HA iframe.
+    action_url = str(request.url).split("?")[0]
+    return _LOGIN_PAGE_TMPL.format(error_block=error_block, action_url=action_url)
 
 
 @router.post("/login", include_in_schema=False)
 async def login_submit(
+    request: Request,
     username: str = Form(...),
     password: str = Form(...),
 ):
     """Validate credentials and set a signed session cookie."""
+    base = str(request.base_url).rstrip("/")
     if validate_basic_credentials(username, password):
         token = make_session_token(username)
-        response = RedirectResponse(url="/admin/sessions", status_code=303)
+        response = RedirectResponse(url=f"{base}/admin/sessions", status_code=303)
         response.set_cookie(
             key=SESSION_COOKIE,
             value=token,
@@ -118,7 +123,7 @@ async def login_submit(
         )
         return response
     # Bad credentials – redirect back to login with error flag
-    return RedirectResponse(url="/admin/login?error=1", status_code=303)
+    return RedirectResponse(url=f"{base}/admin/login?error=1", status_code=303)
 
 
 @router.get("/openapi.json", include_in_schema=False)

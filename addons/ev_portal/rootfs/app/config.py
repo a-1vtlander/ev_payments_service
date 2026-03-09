@@ -178,6 +178,26 @@ def load_config() -> Dict[str, Any]:
     log.info("Admin interface  : %s (port %s, tls=%s)",
              "enabled" if admin_enabled else "disabled", admin_port_https, tls_mode)
 
+    # ── Domain / key-manager config ────────────────────────────────────────
+    # ev_portal_domain: public hostname of the guest portal — keymgr builds its
+    #   redirect URL from this (e.g. "baselander-ev.extravio.co").
+    # keymgr_domain:    hostname used to reach the key manager itself — needed
+    #   to request a publicly-trusted certificate via DNS-01 ACME so browsers
+    #   accept the connection without a warning.
+    ev_portal_domain: str = (opts.get("ev_portal_domain") or "").strip()
+    keymgr_domain: str    = (opts.get("keymgr_domain") or "").strip()
+    dns_cf_token: str     = (opts.get("dns_cloudflare_api_token") or "").strip()
+    if not ev_portal_domain:
+        log.warning(
+            "ev_portal_domain is not set — keymgr redirect will not work. "
+            "Set it to the public hostname of the guest portal (e.g. baselander-ev.extravio.co)"
+        )
+    if keymgr_domain and not dns_cf_token:
+        log.warning(
+            "keymgr_domain is set but dns_cloudflare_api_token is empty — "
+            "keymgr will start without TLS until a token is provided"
+        )
+
     return {
         "mqtt": {
             "host":     (opts.get("mqtt_host") or "").strip(),
@@ -211,6 +231,11 @@ def load_config() -> Dict[str, Any]:
             "tls_mode":       tls_mode,
             "tls_cert_path":  (opts.get("admin_tls_cert_path") or "").strip(),
             "tls_key_path":   (opts.get("admin_tls_key_path") or "").strip(),
+        },
+        "keymgr": {
+            "ev_portal_domain":    ev_portal_domain,
+            "domain":              keymgr_domain,
+            "cloudflare_token":    dns_cf_token,
         },
     }
 

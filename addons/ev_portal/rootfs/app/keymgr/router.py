@@ -2,7 +2,8 @@
 keymgr/router.py — Routes for the key-management server (port 8092).
 
 GET  /              — Fetch (or generate) a valid key and redirect to
-                      baselander-ev.extravio.co?access_key=<key>
+                      https://<PORTAL_HOST>?access_key=<key>
+                      (PORTAL_HOST is set at startup from the ev_portal_domain config option)
 GET  /keygen        — Key management UI; shows newly issued key when ?issued=<key>
 POST /keygen/issue  — Generate a new UUID key, persist to DB, redirect to /keygen?issued=<key>
 """
@@ -142,7 +143,8 @@ def _build_key_block(key: str, expires_at: str) -> str:
     </div>"""
 
 
-PORTAL_HOST = "baselander-ev.extravio.co"
+# Set at startup by serve.py from the ev_portal_domain config option.
+PORTAL_HOST: str = ""
 
 # ---------------------------------------------------------------------------
 # Helpers

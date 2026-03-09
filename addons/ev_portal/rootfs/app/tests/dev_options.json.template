@@ -17,5 +17,8 @@
   "admin_port_https": 8091,
   "admin_tls_mode": "self_signed",
   "admin_tls_cert_path": "",
-  "admin_tls_key_path": ""
+  "admin_tls_key_path": "",
+  "ev_portal_domain": "",
+  "keymgr_domain": "",
+  "dns_cloudflare_api_token": ""
 }

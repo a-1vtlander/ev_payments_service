@@ -79,6 +79,56 @@ async def test_login_page_shows_error_when_flag_set(admin_client: AsyncClient):
     assert "Invalid username" in resp.text
 
 
+async def test_login_form_action_is_absolute_url(admin_client: AsyncClient):
+    """Form action must be an absolute URL so it posts to the right origin
+    even when loaded inside an HA iframe or behind a reverse proxy."""
+    resp = await admin_client.get("/admin/login")
+    assert resp.status_code == 200
+    # Must contain a scheme — not a root-relative path like /admin/login
+    assert 'action="https://' in resp.text
+
+
+async def test_login_form_has_target_top(admin_client: AsyncClient):
+    """target=_top ensures the form POSTs from the top-level frame,
+    breaking out of any iframe that HA may use to embed the panel."""
+    resp = await admin_client.get("/admin/login")
+    assert 'target="_top"' in resp.text
+
+
+async def test_login_success_redirect_is_absolute(admin_client: AsyncClient):
+    """The Location header after successful login must be an absolute URL."""
+    resp = await admin_client.post(
+        "/admin/login",
+        data={"username": TEST_ADMIN_USER, "password": TEST_ADMIN_PASS},
+        follow_redirects=False,
+    )
+    assert resp.status_code == 303
+    assert resp.headers["location"].startswith("https://")
+
+
+async def test_login_failure_redirect_is_absolute(admin_client: AsyncClient):
+    """The Location header after a failed login must be an absolute URL."""
+    resp = await admin_client.post(
+        "/admin/login",
+        data={"username": "wrong", "password": "wrong"},
+        follow_redirects=False,
+    )
+    assert resp.status_code == 303
+    assert resp.headers["location"].startswith("https://")
+
+
+async def test_admin_response_has_x_frame_options(admin_client: AsyncClient):
+    """All admin responses must carry X-Frame-Options to prevent cross-origin embedding."""
+    resp = await admin_client.get("/admin/login")
+    assert "x-frame-options" in resp.headers
+    assert resp.headers["x-frame-options"].upper() in ("DENY", "SAMEORIGIN")
+
+
+async def test_admin_response_has_x_content_type_options(admin_client: AsyncClient):
+    resp = await admin_client.get("/admin/login")
+    assert resp.headers.get("x-content-type-options") == "nosniff"
+
+
 # ---------------------------------------------------------------------------
 # Login form submission
 # ---------------------------------------------------------------------------
