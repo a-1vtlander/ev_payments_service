@@ -153,6 +153,15 @@ def _migrate_sessions(conn: sqlite3.Connection) -> None:
             log.info("db migration: added column sessions.%s", col)
 
 
+_CREATE_ACCESS_KEYS = """
+CREATE TABLE IF NOT EXISTS access_keys (
+    key        TEXT PRIMARY KEY,
+    created_at TEXT NOT NULL,
+    expires_at TEXT NOT NULL
+)
+"""
+
+
 def _init_db_sync() -> None:
     with _connect() as conn:
         conn.execute(_CREATE_TABLE)
@@ -162,6 +171,7 @@ def _init_db_sync() -> None:
         conn.execute(_CREATE_EVENTS_TABLE)
         conn.execute(_EVENTS_IDX_KEY)
         conn.execute(_EVENTS_IDX_TS)
+        conn.execute(_CREATE_ACCESS_KEYS)
         _migrate_sessions(conn)
         conn.commit()
 
@@ -644,3 +654,82 @@ async def write_event(
         error_code, error_detail, duration_ms,
         request_json, response_json, metadata_json,
     )
+
+
+# ---------------------------------------------------------------------------
+# Access keys
+# ---------------------------------------------------------------------------
+
+def _create_access_key_sync(key: str, created_at: str, expires_at: str) -> None:
+    with _connect() as conn:
+        conn.execute(
+            "INSERT INTO access_keys (key, created_at, expires_at) VALUES (?, ?, ?)",
+            (key, created_at, expires_at),
+        )
+        conn.commit()
+
+
+async def create_access_key(key: str, created_at: str, expires_at: str) -> None:
+    """Persist a new access key with the given expiry timestamp."""
+    await asyncio.to_thread(_create_access_key_sync, key, created_at, expires_at)
+
+
+def _get_access_key_sync(key: str) -> Optional[dict]:
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT * FROM access_keys WHERE key = ?", (key,)
+        ).fetchone()
+    return dict(row) if row else None
+
+
+async def get_access_key(key: str) -> Optional[dict]:
+    """Fetch a single access key row, or None if not found."""
+    return await asyncio.to_thread(_get_access_key_sync, key)
+
+
+def _validate_access_key_sync(key: str) -> bool:
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT expires_at FROM access_keys WHERE key = ?", (key,)
+        ).fetchone()
+    if not row:
+        return False
+    try:
+        expires = datetime.fromisoformat(row["expires_at"])
+        if expires.tzinfo is None:
+            expires = expires.replace(tzinfo=timezone.utc)
+        return datetime.now(timezone.utc) < expires
+    except (ValueError, TypeError):
+        return False
+
+
+async def validate_access_key(key: str) -> bool:
+    """Return True if the key exists and has not expired."""
+    return await asyncio.to_thread(_validate_access_key_sync, key)
+
+
+def _any_access_keys_exist_sync() -> bool:
+    with _connect() as conn:
+        row = conn.execute("SELECT 1 FROM access_keys LIMIT 1").fetchone()
+    return row is not None
+
+
+async def any_access_keys_exist() -> bool:
+    """Return True if at least one key has ever been issued (active or expired)."""
+    return await asyncio.to_thread(_any_access_keys_exist_sync)
+
+
+def _get_valid_access_key_sync() -> Optional[dict]:
+    """Return the first non-expired access key, or None."""
+    now = datetime.now(timezone.utc).isoformat()
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT * FROM access_keys WHERE expires_at > ? ORDER BY expires_at DESC LIMIT 1",
+            (now,),
+        ).fetchone()
+    return dict(row) if row else None
+
+
+async def get_valid_access_key() -> Optional[dict]:
+    """Return the first non-expired access key row, or None if all are expired/missing."""
+    return await asyncio.to_thread(_get_valid_access_key_sync)

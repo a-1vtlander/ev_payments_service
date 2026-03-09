@@ -8,6 +8,7 @@ Public routes (no auth):
 
 Protected routes (session cookie or Basic Auth):
   GET  /admin/health
+  GET  /admin/db
   GET  /admin/sessions
   GET  /admin/sessions/{idempotency_key}
   POST /admin/sessions/{idempotency_key}/capture       (AUTHORIZED → CAPTURED)
@@ -241,6 +242,115 @@ async def admin_index(request: Request, actor: Annotated[str, Depends(require_ad
 @router.get("/health")
 async def admin_health(actor: Annotated[str, Depends(require_admin)]):
     return "ok"
+
+
+@router.get("/db", response_class=HTMLResponse)
+async def db_structure(request: Request, actor: Annotated[str, Depends(require_admin)]):
+    """Show DB table schemas, row counts, and access_keys contents."""
+    import sqlite3 as _sqlite3
+    import db as _db
+
+    def _inspect():
+        conn = _sqlite3.connect(_db.DB_PATH)
+        conn.row_factory = _sqlite3.Row
+        try:
+            tables = [r[0] for r in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name"
+            ).fetchall()]
+            result = {}
+            for table in tables:
+                cols = conn.execute(f"PRAGMA table_info({table})").fetchall()
+                count = conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+                rows = None
+                if table == "access_keys":
+                    rows = [dict(r) for r in conn.execute(
+                        "SELECT key, created_at, expires_at FROM access_keys ORDER BY created_at DESC"
+                    ).fetchall()]
+                result[table] = {"columns": [dict(c) for c in cols], "row_count": count, "rows": rows}
+            return result
+        finally:
+            conn.close()
+
+    import asyncio as _asyncio
+    data = await _asyncio.to_thread(_inspect)
+
+    from datetime import datetime, timezone
+    now = datetime.now(timezone.utc)
+
+    def _col_table(cols):
+        rows_html = ""
+        for c in cols:
+            pk   = " ★" if c["pk"] else ""
+            notnull = " NOT NULL" if c["notnull"] else ""
+            dflt = f" DEFAULT {c['dflt_value']}" if c["dflt_value"] is not None else ""
+            rows_html += f"<tr><td>{c['cid']}</td><td><b>{c['name']}</b>{pk}</td><td>{c['type']}{notnull}{dflt}</td></tr>"
+        return f'<table class="schema"><thead><tr><th>#</th><th>Column</th><th>Type / Constraints</th></tr></thead><tbody>{rows_html}</tbody></table>'
+
+    def _access_key_rows(rows):
+        if not rows:
+            return "<p class='muted'>No keys issued.</p>"
+        html = '<table class="schema"><thead><tr><th>Key</th><th>Created</th><th>Expires</th><th>Status</th></tr></thead><tbody>'
+        for r in rows:
+            try:
+                exp = datetime.fromisoformat(r["expires_at"])
+                if exp.tzinfo is None:
+                    exp = exp.replace(tzinfo=timezone.utc)
+                status_str = '<span style="color:#22c55e">active</span>' if exp > now else '<span style="color:#ef4444">expired</span>'
+                exp_display = exp.strftime("%Y-%m-%d %H:%M UTC")
+            except Exception:
+                status_str = "unknown"
+                exp_display = r["expires_at"]
+            html += f"<tr><td class='mono'>{r['key']}</td><td>{r['created_at']}</td><td>{exp_display}</td><td>{status_str}</td></tr>"
+        return html + "</tbody></table>"
+
+    sections = ""
+    for table, info in data.items():
+        key_section = ""
+        if info["rows"] is not None:
+            key_section = f"<h3 class='sub-header'>Rows</h3>{_access_key_rows(info['rows'])}"
+        sections += f"""
+        <section>
+          <h2 class="table-name">{table} <span class="count">({info['row_count']} rows)</span></h2>
+          <h3 class="sub-header">Schema</h3>
+          {_col_table(info['columns'])}
+          {key_section}
+        </section>"""
+
+    html = f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>DB Structure – EV Portal Admin</title>
+  <style>
+    body {{ font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+           background:#0f172a; color:#e2e8f0; margin:0; padding:2rem; }}
+    a {{ color:#93c5fd; }}
+    h1 {{ font-size:1.3rem; color:#f1f5f9; margin-bottom:0.25rem; }}
+    .meta {{ color:#64748b; font-size:0.8rem; margin-bottom:2rem; }}
+    section {{ background:#1e293b; border:1px solid #334155; border-radius:10px;
+               padding:1.5rem; margin-bottom:1.5rem; }}
+    h2.table-name {{ font-size:1rem; font-weight:700; color:#f1f5f9; margin:0 0 1rem; }}
+    .count {{ color:#64748b; font-weight:400; font-size:0.85rem; }}
+    h3.sub-header {{ font-size:0.7rem; text-transform:uppercase; letter-spacing:0.08em;
+                     color:#64748b; margin:0.75rem 0 0.4rem; }}
+    table.schema {{ border-collapse:collapse; width:100%; font-size:0.82rem; }}
+    table.schema th {{ background:#0f172a; color:#94a3b8; font-weight:600;
+                       padding:6px 10px; text-align:left; border-bottom:1px solid #334155; }}
+    table.schema td {{ padding:5px 10px; border-bottom:1px solid #1e3a5f; vertical-align:top; }}
+    table.schema tr:last-child td {{ border-bottom:none; }}
+    .mono {{ font-family:"SFMono-Regular",Consolas,monospace; font-size:0.78rem;
+             word-break:break-all; }}
+    .muted {{ color:#64748b; font-size:0.85rem; }}
+  </style>
+</head>
+<body>
+  <h1>Database Structure</h1>
+  <p class="meta">Path: <span class="mono">{_db.DB_PATH}</span> &nbsp;·&nbsp; <a href="/admin/sessions">← Sessions</a></p>
+  {sections}
+</body>
+</html>"""
+    return HTMLResponse(html)
 
 
 @router.get("/sessions")

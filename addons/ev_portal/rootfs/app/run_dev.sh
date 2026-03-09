@@ -40,6 +40,7 @@ echo "  DB       : $EV_DB_PATH"
 echo "  TLS dir  : $EV_TLS_DIR"
 echo "  Guest    : https://localhost:8090  (self-signed; trust once via tests/tls/trust_dev_cert.sh)"
 echo "  Admin    : https://localhost:8091/admin"
+echo "  KeyMgr   : https://localhost:8092/keygen"
 echo "  Health   : https://localhost:8090/health"
 echo "-------------------------------------------------------"
 

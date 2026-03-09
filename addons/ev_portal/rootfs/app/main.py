@@ -27,6 +27,7 @@ from fastapi.responses import HTMLResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from access import AccessControlMiddleware
+from access_key import AccessKeyMiddleware
 from lifespan import lifespan
 import state
 from endpoints import debug, health, session, start, submit_payment
@@ -41,6 +42,9 @@ app = FastAPI(title="EV Charger Portal", lifespan=lifespan)
 
 # ── Access control: LAN / Tailscale only; Cloudflare-tunnel-aware ─────────
 app.add_middleware(AccessControlMiddleware)
+
+# ── Access key: browser must present a valid issued key (cookie or ?key=) ─
+app.add_middleware(AccessKeyMiddleware)
 
 # ── Static assets ──────────────────────────────────────────────────────────
 _APP_DIR = Path(__file__).parent

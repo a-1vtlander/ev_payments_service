@@ -31,7 +31,8 @@ logging.basicConfig(
 )
 log = logging.getLogger(__name__)
 
-GUEST_PORT = 8090
+GUEST_PORT  = 8090
+KEYMGR_PORT = 8092
 
 
 async def _serve_all() -> None:
@@ -109,6 +110,22 @@ async def _serve_all() -> None:
         log.info("Admin interface disabled (admin_enabled=false)")
 
     log.info("Guest server starting on http://0.0.0.0:%s  (plain HTTP; Cloudflare provides HTTPS at edge)", GUEST_PORT)
+
+    # ── Key manager server (HTTP in prod; HTTPS in dev when EV_GUEST_HTTPS=1) ──
+    keymgr_kwargs: dict = {}
+    if dev_https and guest_cert:
+        keymgr_kwargs = {"ssl_certfile": guest_cert, "ssl_keyfile": guest_key}
+    keymgr_config = uvicorn.Config(
+        "keymgr.app:keymgr_app",
+        host="0.0.0.0",
+        port=KEYMGR_PORT,
+        log_level="info",
+        access_log=True,
+        **keymgr_kwargs,
+    )
+    servers.append(uvicorn.Server(keymgr_config))
+    scheme = "https" if keymgr_kwargs else "http"
+    log.info("Key manager starting on %s://0.0.0.0:%s", scheme, KEYMGR_PORT)
 
     await asyncio.gather(*[s.serve() for s in servers])
 
