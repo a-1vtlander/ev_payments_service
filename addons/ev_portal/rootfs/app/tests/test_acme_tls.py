@@ -203,6 +203,167 @@ def test_cf_delete_txt_tolerates_404():
 
 
 # ---------------------------------------------------------------------------
+# _provision_cert — unit tests with mocked ACME client
+#
+# These exist specifically to catch bugs in the ACME client interaction that
+# can only manifest at runtime (e.g. wrong attribute paths on ClientV2,
+# wrong method names for order polling, missing Key ID after ConflictError).
+# ---------------------------------------------------------------------------
+
+def _run_provision_cert(tmp_path, mock_acme_client, acct_conflict_location=None):
+    """
+    Run _provision_cert with all ACME/CF calls mocked.
+
+    If *acct_conflict_location* is set, new_account() raises ConflictError
+    with that location string (simulating an already-registered account).
+
+    Returns (cert_path, key_path, mock_challenge) so callers can assert on
+    what the mocked client was called with.
+    """
+    from acme import errors as acme_errors
+
+    # Create a distinct class so isinstance(ch.chall, challenges.DNS01) is True
+    # after we patch challenges.DNS01 to this class.
+    MockDNS01 = type("DNS01", (), {})
+
+    mock_challenge = MagicMock()
+    mock_challenge.chall = MockDNS01()
+    mock_challenge.validation.return_value = "abc123_validation_token"
+
+    mock_authz = MagicMock()
+    mock_authz.body.challenges = [mock_challenge]
+
+    mock_initial_order = MagicMock()
+    mock_initial_order.authorizations = [mock_authz]
+
+    mock_finalized_order = MagicMock()
+    mock_finalized_order.fullchain_pem = (
+        b"-----BEGIN CERTIFICATE-----\nZmFrZQ==\n-----END CERTIFICATE-----\n"
+    )
+
+    mock_acme_client.new_order.return_value = mock_initial_order
+    mock_acme_client.poll_and_finalize.return_value = mock_finalized_order
+
+    if acct_conflict_location:
+        mock_acme_client.new_account.side_effect = acme_errors.ConflictError(
+            acct_conflict_location
+        )
+
+    mock_v2_cls = MagicMock()
+    mock_v2_cls.get_directory.return_value = MagicMock()
+    mock_v2_cls.return_value = mock_acme_client
+
+    cert_path = str(tmp_path / "keymgr.crt")
+    key_path  = str(tmp_path / "keymgr.key")
+
+    with patch("acme.client.ClientNetwork"), \
+         patch("acme.client.ClientV2", mock_v2_cls), \
+         patch("acme.challenges.DNS01", MockDNS01), \
+         patch("acme.crypto_util.make_csr", return_value=b"fakecsr"), \
+         patch.object(acme_tls, "_cf_get_zone_id", return_value="zone123"), \
+         patch.object(acme_tls, "_cf_create_txt", return_value="rec456"), \
+         patch.object(acme_tls, "_cf_delete_txt"), \
+         patch("time.sleep"):
+        acme_tls._provision_cert(
+            "test.example.com", "cf-token", str(tmp_path), cert_path, key_path
+        )
+
+    return cert_path, key_path, mock_challenge
+
+
+def test_provision_cert_writes_cert_to_disk(tmp_path):
+    """Happy path: cert and key files are written after a successful order."""
+    cert_path, key_path, _ = _run_provision_cert(tmp_path, MagicMock())
+    assert os.path.exists(cert_path), "cert file not written"
+    assert os.path.exists(key_path), "key file not written"
+
+
+def test_provision_cert_calls_poll_and_finalize(tmp_path):
+    """poll_and_finalize() is the correct ClientV2 API — not poll_order_and_request_issuance."""
+    mock_client = MagicMock()
+    _run_provision_cert(tmp_path, mock_client)
+    mock_client.poll_and_finalize.assert_called_once()
+
+
+def test_provision_cert_answer_challenge_uses_net_key(tmp_path):
+    """answer_challenge must use acme_client.net.key, not acme_client.client.net.key."""
+    mock_client = MagicMock()
+    _, _, mock_challenge = _run_provision_cert(tmp_path, mock_client)
+    mock_challenge.response.assert_called_once_with(mock_client.net.key)
+    mock_client.answer_challenge.assert_called_once_with(
+        mock_challenge, mock_challenge.response.return_value
+    )
+
+
+def test_provision_cert_validation_uses_net_key(tmp_path):
+    """validation() (builds the TXT value) must also use acme_client.net.key."""
+    mock_client = MagicMock()
+    _, _, mock_challenge = _run_provision_cert(tmp_path, mock_client)
+    mock_challenge.validation.assert_called_once_with(mock_client.net.key)
+
+
+def test_provision_cert_conflict_error_sets_account_uri(tmp_path):
+    """
+    When new_account raises ConflictError (account already exists), the
+    account URI from conflict.location MUST be set on acme_client.net.account.
+    Without this, Let's Encrypt rejects subsequent requests with:
+        'No Key ID in JWS header'
+    """
+    from acme import messages
+    mock_client = MagicMock()
+    acct_uri = "https://acme-v02.api.letsencrypt.org/acme/acct/99999"
+    _run_provision_cert(tmp_path, mock_client, acct_conflict_location=acct_uri)
+
+    # net.account must have been set to a real RegistrationResource (not a Mock)
+    assert not isinstance(mock_client.net.account, MagicMock), (
+        "net.account was never set after ConflictError — "
+        "'No Key ID in JWS header' will occur on the next request"
+    )
+    assert isinstance(mock_client.net.account, messages.RegistrationResource)
+    assert mock_client.net.account.uri == acct_uri
+
+
+def test_provision_cert_cf_cleanup_runs_even_on_error(tmp_path):
+    """_cf_delete_txt must be called even when polling raises an exception."""
+    from unittest.mock import call
+    mock_client = MagicMock()
+    mock_client.poll_and_finalize.side_effect = RuntimeError("poll failed")
+
+    MockDNS01 = type("DNS01", (), {})
+    mock_challenge = MagicMock()
+    mock_challenge.chall = MockDNS01()
+    mock_challenge.validation.return_value = "tok"
+    mock_authz = MagicMock()
+    mock_authz.body.challenges = [mock_challenge]
+    mock_initial_order = MagicMock()
+    mock_initial_order.authorizations = [mock_authz]
+    mock_client.new_order.return_value = mock_initial_order
+
+    mock_v2_cls = MagicMock()
+    mock_v2_cls.get_directory.return_value = MagicMock()
+    mock_v2_cls.return_value = mock_client
+
+    cert_path = str(tmp_path / "keymgr.crt")
+    key_path  = str(tmp_path / "keymgr.key")
+    mock_delete = MagicMock()
+
+    with patch("acme.client.ClientNetwork"), \
+         patch("acme.client.ClientV2", mock_v2_cls), \
+         patch("acme.challenges.DNS01", MockDNS01), \
+         patch("acme.crypto_util.make_csr", return_value=b"fakecsr"), \
+         patch.object(acme_tls, "_cf_get_zone_id", return_value="zone123"), \
+         patch.object(acme_tls, "_cf_create_txt", return_value="rec456"), \
+         patch.object(acme_tls, "_cf_delete_txt", mock_delete), \
+         patch("time.sleep"):
+        with pytest.raises(RuntimeError, match="poll failed"):
+            acme_tls._provision_cert(
+                "test.example.com", "cf-token", str(tmp_path), cert_path, key_path
+            )
+
+    mock_delete.assert_called_once_with("cf-token", "zone123", "rec456")
+
+
+# ---------------------------------------------------------------------------
 # Live integration test — real Let's Encrypt + Cloudflare DNS-01
 # ---------------------------------------------------------------------------
 

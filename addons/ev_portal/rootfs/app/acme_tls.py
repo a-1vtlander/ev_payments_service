@@ -141,8 +141,16 @@ def _provision_cert(
     try:
         acme_client.new_account(reg)
         log.info("ACME: registered new account")
-    except errors.ConflictError:
-        log.info("ACME: account already registered")
+    except errors.ConflictError as conflict:
+        # Account already exists.  We MUST set the account URI on the client's
+        # network layer so every subsequent request is signed with the correct
+        # JWS Key ID header.  Without this, LE rejects the next request with
+        # "No Key ID in JWS header".
+        acme_client.net.account = messages.RegistrationResource(
+            uri=conflict.location,
+            body=messages.Registration(),
+        )
+        log.info("ACME: account already registered at %s", conflict.location)
 
     # ── Domain private key + CSR ──────────────────────────────────────────
     domain_rsa = rsa.generate_private_key(
