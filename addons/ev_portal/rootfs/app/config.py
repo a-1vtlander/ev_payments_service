@@ -239,6 +239,5 @@ def load_config() -> Dict[str, Any]:
             "cloudflare_token":    dns_cf_token,
             "cloudflare_zone_id": dns_cf_zone_id,
         },
-        },
     }
 
