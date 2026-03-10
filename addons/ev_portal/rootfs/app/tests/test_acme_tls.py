@@ -409,13 +409,16 @@ async def test_acme_cert_provisioning_live(tmp_path, request):
         pytest.skip("live ACME test only runs with: pytest -m acme")
 
     opts = json.loads(_OPTIONS_FILE.read_text())
-    domain   = opts.get("keymgr_domain", "").strip()
-    cf_token = opts.get("dns_cloudflare_api_token", "").strip()
+    domain      = opts.get("keymgr_domain", "").strip()
+    cf_token    = opts.get("dns_cloudflare_api_token", "").strip()
+    cf_zone_id  = opts.get("dns_cloudflare_zone_id", "").strip()
 
     if not domain or not cf_token:
         pytest.skip("keymgr_domain or dns_cloudflare_api_token not set in dev_options.json")
 
-    cert_path, key_path = await acme_tls.ensure_acme_cert(domain, cf_token, str(tmp_path))
+    cert_path, key_path = await acme_tls.ensure_acme_cert(
+        domain, cf_token, str(tmp_path), cf_zone_id=cf_zone_id
+    )
 
     assert os.path.exists(cert_path), "cert file was not created"
     assert os.path.exists(key_path),  "key file was not created"

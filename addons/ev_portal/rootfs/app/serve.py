@@ -39,6 +39,10 @@ KEYMGR_PORT = 8092
 async def _serve_all() -> None:
     cfg = load_config()
 
+    if cfg.get("app", {}).get("debug_mode"):
+        logging.getLogger().setLevel(logging.DEBUG)
+        log.debug("debug_mode: log level set to DEBUG")
+
     # Populate admin config in state BEFORE any server starts so auth works
     # from the very first request even if the lifespan hasn't run yet.
     state._admin_config = cfg["admin"]

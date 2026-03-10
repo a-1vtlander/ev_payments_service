@@ -44,12 +44,14 @@ async def lifespan(app: FastAPI):
     state._authorize_request_topic  = f"{base_topic}/authorize_session"
     state._authorize_response_topic = f"{base_topic}/authorize_session/response"
     state._finalize_session_topic   = f"{base_topic}/finalize_session"
+    state._session_errors_topic     = f"{base_topic}/session_errors"
 
     log.info("Booking request topic   : %s/request_session", base_topic)
     log.info("Booking response topic  : %s", state._booking_response_topic)
     log.info("Authorize request topic : %s", state._authorize_request_topic)
     log.info("Authorize response topic: %s", state._authorize_response_topic)
     log.info("Finalize session topic  : %s", state._finalize_session_topic)
+    log.info("Session errors topic    : %s", state._session_errors_topic)
 
     # ── Square config ──────────────────────────────────────────────────────
     state._square_config = cfg["square"]

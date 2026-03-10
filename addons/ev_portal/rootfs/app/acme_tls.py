@@ -245,16 +245,20 @@ def _cf_get_zone_id(token: str, domain: str) -> str:
     parts = domain.split(".")
     for i in range(len(parts) - 1):
         candidate = ".".join(parts[i:])
+        url = f"{CF_API_BASE}/zones"
+        log.debug("ACME/CF: GET %s?name=%s", url, candidate)
         r = httpx.get(
-            f"{CF_API_BASE}/zones",
+            url,
             params={"name": candidate},
             headers=_cf_headers(token),
             timeout=15,
         )
+        log.debug("ACME/CF: response %s %s", r.status_code, r.text)
         # Cloudflare returns 400 when the supplied name is not a valid zone
         # (e.g. a subdomain label).  That is not an error — continue walking
         # up the label hierarchy.  Only raise on unexpected server errors.
         if r.status_code >= 500:
+            log.error("ACME/CF: zone lookup server error: %s %s", r.status_code, r.text)
             r.raise_for_status()
         if not r.is_success:
             continue
@@ -269,13 +273,19 @@ def _cf_get_zone_id(token: str, domain: str) -> str:
 def _cf_create_txt(token: str, zone_id: str, name: str, value: str) -> str:
     """Create a DNS TXT record; return the record ID."""
     import httpx
+    url = f"{CF_API_BASE}/zones/{zone_id}/dns_records"
+    payload = {"type": "TXT", "name": name, "content": value, "ttl": 60}
+    log.debug("ACME/CF: POST %s body=%s", url, payload)
     r = httpx.post(
-        f"{CF_API_BASE}/zones/{zone_id}/dns_records",
+        url,
         headers=_cf_headers(token),
-        json={"type": "TXT", "name": name, "content": value, "ttl": 60},
+        json=payload,
         timeout=15,
     )
-    r.raise_for_status()
+    log.debug("ACME/CF: response %s %s", r.status_code, r.text)
+    if not r.is_success:
+        log.error("ACME/CF: TXT record creation failed: %s %s", r.status_code, r.text)
+        r.raise_for_status()
     record_id = r.json()["result"]["id"]
     log.info("ACME/CF: created TXT record %s (id=%s)", name, record_id)
     return record_id
@@ -284,11 +294,14 @@ def _cf_create_txt(token: str, zone_id: str, name: str, value: str) -> str:
 def _cf_delete_txt(token: str, zone_id: str, record_id: str) -> None:
     """Delete a DNS TXT record by ID."""
     import httpx
+    url = f"{CF_API_BASE}/zones/{zone_id}/dns_records/{record_id}"
+    log.debug("ACME/CF: DELETE %s", url)
     r = httpx.delete(
-        f"{CF_API_BASE}/zones/{zone_id}/dns_records/{record_id}",
+        url,
         headers=_cf_headers(token),
         timeout=15,
     )
+    log.debug("ACME/CF: response %s %s", r.status_code, r.text)
     if r.status_code not in (200, 404):
         log.warning("ACME/CF: failed to delete TXT record %s: %s", record_id, r.text)
     else:

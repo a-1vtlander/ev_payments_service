@@ -41,6 +41,7 @@ _booking_response_topic: str = ""        # booking/response
 _authorize_request_topic: str = ""       # booking/authorize_session  (publish)
 _authorize_response_topic: str = ""      # booking/authorize_session/response  (subscribe)
 _finalize_session_topic: str = ""        # booking/finalize_session  (subscribe)
+_session_errors_topic: str = ""          # booking/session_errors    (publish)
 
 # Square credentials and settings.
 _square_config: dict = {}

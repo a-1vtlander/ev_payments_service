@@ -446,3 +446,208 @@ async def test_overcharge_idempotency_key_is_stable(tmp_db) -> None:
         ).hexdigest()
         assert keys_used[0] == expected
 
+
+# ---------------------------------------------------------------------------
+# Apple Pay overcharge path
+#
+# Apple Pay (and other digital wallets) produce a one-time token that cannot
+# be stored as a card-on-file.  The DB row therefore has square_card_id=""
+# and square_customer_id="".
+#
+# Square returns EDIT_AMOUNT_UP in payment_capabilities for wallet payments,
+# meaning the pre-auth can be updated in-place above the original authorized
+# amount.  The correct path is:
+#
+#   1. Read payment_capabilities from the DB row.
+#   2. If EDIT_AMOUNT_UP is present → PUT /v2/payments/{id} (new amount) +
+#      POST /v2/payments/{id}/complete to capture.  Do NOT void; do NOT
+#      attempt a direct recharge.
+#   3. If EDIT_AMOUNT_UP is absent and no stored card → mark_failed.
+#
+# These tests document the required behaviour.  Tests that depend on the
+# EDIT_AMOUNT_UP branch will FAIL until finalize.py is updated to check
+# payment_capabilities.
+# ---------------------------------------------------------------------------
+
+# Wallet row: no stored card/customer but EDIT_AMOUNT_UP advertised by Square.
+_BASE_ROW_WALLET = {
+    **_BASE_ROW,
+    "authorized_amount_cents": 2000,
+    "square_card_id":          "",
+    "square_customer_id":      "",
+    "payment_capabilities":    '["EDIT_AMOUNT_UP"]',
+    "payment_version_token":   "tok_abc",
+}
+
+
+async def test_apple_pay_overcharge_uses_capture_not_direct_charge(tmp_db) -> None:
+    """
+    Apple Pay overcharge with EDIT_AMOUNT_UP must use PUT+capture,
+    NOT void+recharge.  charge_card_payment must never be called.
+    """
+    row = {**_BASE_ROW_WALLET}
+    payment_result = {"id": "pay_preauth", "amount_money": {"amount": 2941}}
+
+    with (
+        patch("db.get_session_by_booking_id", new=AsyncMock(return_value=row)),
+        patch("square.capture_payment", new=AsyncMock(return_value=payment_result)) as mock_capture,
+        patch("square.cancel_payment", new=AsyncMock()) as mock_cancel,
+        patch("square.charge_card_payment", new=AsyncMock()) as mock_charge,
+        patch("db.mark_captured", new=AsyncMock()) as mock_captured,
+        patch("db.mark_failed", new=AsyncMock()) as mock_failed,
+    ):
+        await _handle_finalize(_good_payload(2941))
+        mock_capture.assert_called_once_with(
+            payment_id="pay_preauth",
+            final_amount_cents=2941,
+        )
+        mock_cancel.assert_not_called()
+        mock_charge.assert_not_called()
+        mock_failed.assert_not_called()
+        mock_captured.assert_called_once()
+
+
+async def test_apple_pay_overcharge_captures_at_final_amount(tmp_db) -> None:
+    """
+    The amount passed to capture_payment must be the final billed amount,
+    not the original authorized amount.
+    """
+    row = {**_BASE_ROW_WALLET}
+    payment_result = {"id": "pay_preauth", "amount_money": {"amount": 2941}}
+
+    with (
+        patch("db.get_session_by_booking_id", new=AsyncMock(return_value=row)),
+        patch("square.capture_payment", new=AsyncMock(return_value=payment_result)) as mock_capture,
+        patch("square.cancel_payment", new=AsyncMock()),
+        patch("square.charge_card_payment", new=AsyncMock()),
+        patch("db.mark_captured", new=AsyncMock()),
+    ):
+        await _handle_finalize(_good_payload(2941))
+        assert mock_capture.call_args.kwargs["final_amount_cents"] == 2941
+
+
+async def test_apple_pay_overcharge_mark_captured_with_correct_values(tmp_db) -> None:
+    """
+    After a successful EDIT_AMOUNT_UP capture, mark_captured must be called
+    with the payment_id and the final captured amount.
+    """
+    row = {**_BASE_ROW_WALLET}
+    payment_result = {"id": "pay_preauth", "amount_money": {"amount": 2941}}
+
+    with (
+        patch("db.get_session_by_booking_id", new=AsyncMock(return_value=row)),
+        patch("square.capture_payment", new=AsyncMock(return_value=payment_result)),
+        patch("square.cancel_payment", new=AsyncMock()),
+        patch("square.charge_card_payment", new=AsyncMock()),
+        patch("db.mark_captured", new=AsyncMock()) as mock_captured,
+    ):
+        await _handle_finalize(_good_payload(2941))
+        mock_captured.assert_called_once_with(
+            idempotency_key=IK,
+            square_capture_payment_id="pay_preauth",
+            captured_amount_cents=2941,
+        )
+
+
+async def test_apple_pay_overcharge_without_edit_amount_up_captures_authorized_amount(tmp_db) -> None:
+    """
+    If EDIT_AMOUNT_UP is NOT in capabilities and there is no stored card,
+    the authorized amount must be captured (partial capture) and a
+    session_errors MQTT message published.  mark_failed must NOT be called.
+    charge_card_payment must not be called.
+    """
+    row = {
+        **_BASE_ROW_WALLET,
+        "authorized_amount_cents": 2000,
+        "payment_capabilities": "[]",  # Square did not grant EDIT_AMOUNT_UP
+    }
+    capture_result = {"id": "pay_preauth", "amount_money": {"amount": 2000}}
+    mock_mqtt = MagicMock()
+    mock_mqtt.is_connected.return_value = True
+
+    with (
+        patch("db.get_session_by_booking_id", new=AsyncMock(return_value=row)),
+        patch("square.cancel_payment", new=AsyncMock()),
+        patch("square.capture_payment", new=AsyncMock(return_value=capture_result)) as mock_capture,
+        patch("square.charge_card_payment", new=AsyncMock()) as mock_charge,
+        patch("db.mark_failed", new=AsyncMock()) as mock_failed,
+        patch("db.mark_captured", new=AsyncMock()) as mock_captured,
+        patch("state.mqtt_client", mock_mqtt),
+        patch("state._session_errors_topic", "ev/charger/home/charger/booking/session_errors"),
+    ):
+        await _handle_finalize(_good_payload(2941))
+        # Captured at the authorized amount (not the final amount)
+        mock_capture.assert_called_once_with(
+            payment_id="pay_preauth",
+            final_amount_cents=2000,
+        )
+        mock_captured.assert_called_once()
+        assert mock_captured.call_args.kwargs["captured_amount_cents"] == 2000
+        # session_errors published with shortfall info
+        mock_mqtt.publish.assert_called_once()
+        published_topic, published_payload = mock_mqtt.publish.call_args.args[:2]
+        assert published_topic == "ev/charger/home/charger/booking/session_errors"
+        payload = json.loads(published_payload)
+        assert payload["shortfall_cents"] == 941
+        assert payload["authorized_cents"] == 2000
+        assert payload["booking_id"] == TEST_BOOKING_ID
+        # No failure
+        mock_failed.assert_not_called()
+        mock_charge.assert_not_called()
+
+
+async def test_apple_pay_overcharge_without_edit_amount_up_mqtt_disconnected_still_captures(tmp_db) -> None:
+    """
+    If MQTT is not connected when publishing session_errors, the partial
+    capture must still have happened and be marked captured.
+    """
+    row = {
+        **_BASE_ROW_WALLET,
+        "authorized_amount_cents": 2000,
+        "payment_capabilities": "[]",
+    }
+    capture_result = {"id": "pay_preauth", "amount_money": {"amount": 2000}}
+    mock_mqtt = MagicMock()
+    mock_mqtt.is_connected.return_value = False
+
+    with (
+        patch("db.get_session_by_booking_id", new=AsyncMock(return_value=row)),
+        patch("square.cancel_payment", new=AsyncMock()),
+        patch("square.capture_payment", new=AsyncMock(return_value=capture_result)),
+        patch("square.charge_card_payment", new=AsyncMock()),
+        patch("db.mark_failed", new=AsyncMock()) as mock_failed,
+        patch("db.mark_captured", new=AsyncMock()) as mock_captured,
+        patch("state.mqtt_client", mock_mqtt),
+        patch("state._session_errors_topic", "ev/charger/home/charger/booking/session_errors"),
+    ):
+        await _handle_finalize(_good_payload(2941))
+        mock_captured.assert_called_once()
+        mock_mqtt.publish.assert_not_called()
+        mock_failed.assert_not_called()
+
+
+async def test_apple_pay_normal_capture_not_affected(tmp_db) -> None:
+    """
+    When final_amount_cents <= authorized_amount_cents for an Apple Pay session,
+    the normal capture path (PUT+complete) must be used regardless of capabilities.
+    No void, no direct charge.
+    """
+    row = {**_BASE_ROW_WALLET, "authorized_amount_cents": 2000}
+    payment_result = {"id": "pay_preauth", "amount_money": {"amount": 1800}}
+
+    with (
+        patch("db.get_session_by_booking_id", new=AsyncMock(return_value=row)),
+        patch("square.capture_payment", new=AsyncMock(return_value=payment_result)) as mock_capture,
+        patch("square.cancel_payment", new=AsyncMock()) as mock_cancel,
+        patch("square.charge_card_payment", new=AsyncMock()) as mock_charge,
+        patch("db.mark_captured", new=AsyncMock()) as mock_captured,
+    ):
+        await _handle_finalize(_good_payload(1800))
+        mock_capture.assert_called_once_with(
+            payment_id="pay_preauth",
+            final_amount_cents=1800,
+        )
+        mock_cancel.assert_not_called()
+        mock_charge.assert_not_called()
+        mock_captured.assert_called_once()
+
