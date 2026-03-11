@@ -238,6 +238,15 @@ def _cf_headers(token: str) -> dict:
     return {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
 
 
+def _cf_log_errors(data: dict, context: str) -> None:
+    """Log any errors present in a Cloudflare JSON response body."""
+    if not data.get("success", True):
+        errors = data.get("errors", [])
+        log.error("ACME/CF: %s — success=false errors=%s", context, errors)
+    elif data.get("errors"):
+        log.warning("ACME/CF: %s — unexpected errors in 200 response: %s", context, data["errors"])
+
+
 def _cf_get_zone_id(token: str, domain: str) -> str:
     """Return the Cloudflare zone ID for the TLD+1 of *domain*."""
     import httpx
@@ -263,6 +272,7 @@ def _cf_get_zone_id(token: str, domain: str) -> str:
         if not r.is_success:
             continue
         data = r.json()
+        _cf_log_errors(data, f"GET /zones?name={candidate}")
         if data.get("result"):
             zone_id = data["result"][0]["id"]
             log.info("ACME/CF: zone %r → id %s", candidate, zone_id)
@@ -286,7 +296,12 @@ def _cf_create_txt(token: str, zone_id: str, name: str, value: str) -> str:
     if not r.is_success:
         log.error("ACME/CF: TXT record creation failed: %s %s", r.status_code, r.text)
         r.raise_for_status()
-    record_id = r.json()["result"]["id"]
+    data = r.json()
+    _cf_log_errors(data, f"POST /dns_records name={name}")
+    if not data.get("success", True):
+        errors = data.get("errors", [])
+        raise RuntimeError(f"ACME/CF: TXT record creation reported success=false: {errors}")
+    record_id = data["result"]["id"]
     log.info("ACME/CF: created TXT record %s (id=%s)", name, record_id)
     return record_id
 
@@ -305,4 +320,6 @@ def _cf_delete_txt(token: str, zone_id: str, record_id: str) -> None:
     if r.status_code not in (200, 404):
         log.warning("ACME/CF: failed to delete TXT record %s: %s", record_id, r.text)
     else:
+        if r.status_code == 200:
+            _cf_log_errors(r.json(), f"DELETE /dns_records/{record_id}")
         log.info("ACME/CF: deleted TXT record %s", record_id)
