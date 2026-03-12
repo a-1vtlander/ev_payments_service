@@ -99,10 +99,10 @@ async def test_valid_key_param_redirects_and_sets_cookie(key_client: AsyncClient
     assert f"key={key}" not in resp.headers["location"]
 
 
-async def test_invalid_key_param_returns_403(key_client: AsyncClient):
+async def test_invalid_key_param_returns_503(key_client: AsyncClient):
     await _issue_key()  # ensure at least one key exists so fail-open doesn't apply
     resp = await key_client.get("/start?key=not-a-real-key", follow_redirects=False)
-    assert resp.status_code == 403
+    assert resp.status_code == 503
 
 
 # ---------------------------------------------------------------------------
@@ -121,10 +121,10 @@ async def test_valid_access_key_param_grants_access(key_client: AsyncClient):
     assert f"key=" not in location
 
 
-async def test_invalid_access_key_param_returns_403(key_client: AsyncClient):
+async def test_invalid_access_key_param_returns_503(key_client: AsyncClient):
     await _issue_key()
     resp = await key_client.get("/start?access_key=garbage", follow_redirects=False)
-    assert resp.status_code == 403
+    assert resp.status_code == 503
 
 
 # ---------------------------------------------------------------------------
@@ -135,19 +135,19 @@ async def test_valid_cookie_grants_access(key_client: AsyncClient):
     key = await _issue_key()
     key_client.cookies.set("ev_access_key", key)
     resp = await key_client.get("/start", follow_redirects=False)
-    # Should reach the endpoint (200/302/503) but not be blocked (403)
-    assert resp.status_code != 403
+    # Should reach the endpoint (200/302) but not be blocked (503)
+    assert resp.status_code != 503
 
 
-async def test_expired_cookie_returns_403(key_client: AsyncClient):
+async def test_expired_cookie_returns_503(key_client: AsyncClient):
     await _issue_key()  # ensure fail-open doesn't apply
     expired = await _issue_expired_key()
     key_client.cookies.set("ev_access_key", expired)
     resp = await key_client.get("/start", follow_redirects=False)
-    assert resp.status_code == 403
+    assert resp.status_code == 503
 
 
-async def test_missing_cookie_no_param_returns_403(key_client: AsyncClient):
+async def test_missing_cookie_no_param_returns_503(key_client: AsyncClient):
     await _issue_key()
     resp = await key_client.get("/start", follow_redirects=False)
-    assert resp.status_code == 403
+    assert resp.status_code == 503

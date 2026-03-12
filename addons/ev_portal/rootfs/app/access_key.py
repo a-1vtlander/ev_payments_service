@@ -30,9 +30,11 @@ _SKIP_PREFIXES = ("/health", "/static/", "/.well-known/")
 _SKIP_EXACT    = {"/favicon.ico"}
 
 _DENY = Response(
-    "Access key required or expired — obtain a key from the portal administrator",
-    status_code=403,
-    media_type="text/plain",
+    "<html><body><h1>Service Unavailable</h1>"
+    "<p>This service is temporarily unavailable. Please try again later.</p>"
+    "</body></html>",
+    status_code=503,
+    media_type="text/html",
 )
 
 
