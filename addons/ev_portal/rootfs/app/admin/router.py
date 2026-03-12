@@ -90,7 +90,7 @@ async def login_page(request: Request, error: int = 0):
     # If they already have a valid session cookie, skip login
     session_cookie = request.cookies.get(SESSION_COOKIE)
     if session_cookie and verify_session_token(session_cookie):
-        return RedirectResponse(url="/admin/sessions", status_code=302)
+        return RedirectResponse(url="/admin/", status_code=302)
 
     error_block = (
         '<div class="error">Invalid username or password. Please try again.</div>'
@@ -104,15 +104,13 @@ async def login_page(request: Request, error: int = 0):
 
 @router.post("/login", include_in_schema=False)
 async def login_submit(
-    request: Request,
     username: str = Form(...),
     password: str = Form(...),
 ):
     """Validate credentials and set a signed session cookie."""
-    base = str(request.base_url).rstrip("/")
     if validate_basic_credentials(username, password):
         token = make_session_token(username)
-        response = RedirectResponse(url=f"{base}/admin/sessions", status_code=303)
+        response = RedirectResponse(url="/admin/", status_code=303)
         response.set_cookie(
             key=SESSION_COOKIE,
             value=token,
@@ -123,7 +121,7 @@ async def login_submit(
         )
         return response
     # Bad credentials – redirect back to login with error flag
-    return RedirectResponse(url=f"{base}/admin/login?error=1", status_code=303)
+    return RedirectResponse(url="/admin/login?error=1", status_code=303)
 
 
 @router.get("/openapi.json", include_in_schema=False)

@@ -95,26 +95,26 @@ async def test_login_form_has_target_top(admin_client: AsyncClient):
     assert 'target="_top"' in resp.text
 
 
-async def test_login_success_redirect_is_absolute(admin_client: AsyncClient):
-    """The Location header after successful login must be an absolute URL."""
+async def test_login_success_redirect_is_relative(admin_client: AsyncClient):
+    """The Location header after successful login must be a root-relative path."""
     resp = await admin_client.post(
         "/admin/login",
         data={"username": TEST_ADMIN_USER, "password": TEST_ADMIN_PASS},
         follow_redirects=False,
     )
     assert resp.status_code == 303
-    assert resp.headers["location"].startswith("https://")
+    assert resp.headers["location"] == "/admin/"
 
 
-async def test_login_failure_redirect_is_absolute(admin_client: AsyncClient):
-    """The Location header after a failed login must be an absolute URL."""
+async def test_login_failure_redirect_is_relative(admin_client: AsyncClient):
+    """The Location header after a failed login must be a root-relative path."""
     resp = await admin_client.post(
         "/admin/login",
         data={"username": "wrong", "password": "wrong"},
         follow_redirects=False,
     )
     assert resp.status_code == 303
-    assert resp.headers["location"].startswith("https://")
+    assert resp.headers["location"] == "/admin/login?error=1"
 
 
 async def test_admin_response_has_x_frame_options(admin_client: AsyncClient):
@@ -141,7 +141,7 @@ async def test_login_correct_creds_sets_cookie_and_redirects(admin_client: Async
         follow_redirects=False,
     )
     assert resp.status_code == 303
-    assert "/admin/sessions" in resp.headers["location"]
+    assert "/admin/" in resp.headers["location"]
     assert "ev_admin_session" in resp.cookies
 
 
@@ -423,3 +423,94 @@ async def test_admin_dashboard_static_refs_all_load(admin_client: AsyncClient) -
     for ref in set(refs):
         r = await admin_client.get(ref)
         assert r.status_code == 200, f"Admin dashboard references {ref!r} but got {r.status_code}"
+
+
+# ---------------------------------------------------------------------------
+# Redirect URL preservation (proxy / reverse-proxy safety)
+#
+# When the admin server sits behind a reverse proxy (Cloudflare Tunnel, Nginx,
+# HA ingress, etc.) the proxy rewrites the Host header to an internal address
+# like 192.168.1.100:8091.  If any redirect uses request.base_url to build an
+# absolute Location header it will embed that internal IP, changing the URL in
+# the browser's address bar and breaking the session.
+#
+# All server-issued redirects must use root-relative paths (e.g. /admin/sessions)
+# so the browser keeps whatever origin the user originally typed.
+# ---------------------------------------------------------------------------
+
+@pytest_asyncio.fixture
+async def admin_client_internal_ip(patched_state) -> AsyncClient:
+    """Admin client whose base_url is an internal LAN IP.
+
+    This simulates what uvicorn sees after a reverse proxy has rewritten the
+    Host header to the machine's local address.  If any redirect builds its
+    Location from request.base_url it will embed this IP instead of the
+    public hostname the user typed.
+    """
+    state._admin_config = {
+        "enabled":    True,
+        "username":   TEST_ADMIN_USER,
+        "password":   TEST_ADMIN_PASS,
+        "port_https": 8091,
+        "tls_mode":   "self_signed",
+    }
+    from admin.app import admin_app
+    async with AsyncClient(
+        transport=ASGITransport(app=admin_app),
+        base_url="https://192.168.1.100:8091",
+    ) as c:
+        yield c
+
+
+async def test_login_success_redirect_is_relative_path(
+    admin_client_internal_ip: AsyncClient,
+):
+    """Successful login must redirect to a root-relative path, not an absolute URL.
+
+    An absolute redirect would bake in whatever Host header the server saw
+    (potentially an internal IP), changing the address bar when behind a proxy.
+    """
+    resp = await admin_client_internal_ip.post(
+        "/admin/login",
+        data={"username": TEST_ADMIN_USER, "password": TEST_ADMIN_PASS},
+        follow_redirects=False,
+    )
+    assert resp.status_code == 303
+    location = resp.headers["location"]
+    assert not location.startswith("https://"), (
+        f"Login success redirect must be a relative path, got absolute URL: {location!r}"
+    )
+    assert location == "/admin/", (
+        f"Expected '/admin/', got {location!r}"
+    )
+
+
+async def test_login_failure_redirect_is_relative_path(
+    admin_client_internal_ip: AsyncClient,
+):
+    """Failed login must redirect to a root-relative path, not an absolute URL."""
+    resp = await admin_client_internal_ip.post(
+        "/admin/login",
+        data={"username": "wrong", "password": "wrong"},
+        follow_redirects=False,
+    )
+    assert resp.status_code == 303
+    location = resp.headers["location"]
+    assert not location.startswith("https://"), (
+        f"Login failure redirect must be a relative path, got absolute URL: {location!r}"
+    )
+    assert location == "/admin/login?error=1", (
+        f"Expected '/admin/login?error=1', got {location!r}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Admin dashboard nav
+# ---------------------------------------------------------------------------
+
+async def test_dashboard_has_db_button(admin_client: AsyncClient):
+    """The admin dashboard must contain a navigation button linking to /admin/db."""
+    _auth_cookie(admin_client)
+    resp = await admin_client.get("/admin/")
+    assert resp.status_code == 200
+    assert "/admin/db" in resp.text, "Expected a link to /admin/db on the dashboard"
