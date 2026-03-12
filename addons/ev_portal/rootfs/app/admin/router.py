@@ -98,7 +98,10 @@ async def login_page(request: Request, error: int = 0):
     )
     # Build absolute action URL so the POST reaches the right origin whether the
     # page is loaded directly, behind a reverse proxy, or inside an HA iframe.
-    action_url = str(request.url).split("?")[0]
+    # Build a root-relative action URL so the POST goes through whatever origin
+    # the browser already has (public hostname / HTTPS), not an internal IP that
+    # the server sees via the proxy-rewritten Host header.
+    action_url = "/admin/login"
     return _LOGIN_PAGE_TMPL.format(error_block=error_block, action_url=action_url)
 
 

@@ -79,13 +79,13 @@ async def test_login_page_shows_error_when_flag_set(admin_client: AsyncClient):
     assert "Invalid username" in resp.text
 
 
-async def test_login_form_action_is_absolute_url(admin_client: AsyncClient):
-    """Form action must be an absolute URL so it posts to the right origin
-    even when loaded inside an HA iframe or behind a reverse proxy."""
+async def test_login_form_action_is_relative_path(admin_client: AsyncClient):
+    """Form action must be a root-relative path so the POST goes through the
+    browser's current origin (public hostname / HTTPS) rather than baking in
+    whatever internal IP the server sees via the proxy-rewritten Host header."""
     resp = await admin_client.get("/admin/login")
     assert resp.status_code == 200
-    # Must contain a scheme — not a root-relative path like /admin/login
-    assert 'action="https://' in resp.text
+    assert 'action="/admin/login"' in resp.text
 
 
 async def test_login_form_has_target_top(admin_client: AsyncClient):
