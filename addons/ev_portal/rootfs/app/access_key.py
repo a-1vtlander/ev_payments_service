@@ -65,6 +65,28 @@ def _is_plausible_key(value: str) -> bool:
     return _rejection_reason(value) is None
 
 
+async def _validate_key(key: str, source: str, method: str, path: str) -> bool:
+    """Stateless pre-check then DB lookup. Logs the reason on failure.
+
+    ``source`` is a short label for log messages (e.g. 'cookie', 'query key').
+    Returns True only when the key is structurally valid *and* live in the DB.
+    """
+    reason = _rejection_reason(key)
+    if reason:
+        log.info(
+            "AccessKeyMiddleware: denied %s %s — %s stateless check failed (%s)",
+            method, path, source, reason,
+        )
+        return False
+    if await db.validate_access_key(key):
+        return True
+    log.info(
+        "AccessKeyMiddleware: denied %s %s — %s key invalid or expired (DB)",
+        method, path, source,
+    )
+    return False
+
+
 def _strip_key_param(url_str: str) -> str:
     """Return the URL with both `key` and `access_key` query parameters removed."""
     parsed     = urlparse(url_str)
@@ -78,8 +100,6 @@ def _strip_key_param(url_str: str) -> str:
 class AccessKeyMiddleware(BaseHTTPMiddleware):
     """
     Require a valid access key on all guest-portal routes.
-
-    Skipped entirely when no keys have ever been issued (safe on first deploy).
     """
 
     async def dispatch(self, request: Request, call_next) -> Response:
@@ -88,56 +108,42 @@ class AccessKeyMiddleware(BaseHTTPMiddleware):
         if path in _SKIP_EXACT or any(path.startswith(p) for p in _SKIP_PREFIXES):
             return await call_next(request)
 
-        # Fail-open: allow all traffic until the first key is issued.
-        if not await db.any_access_keys_exist():
-            log.debug("AccessKeyMiddleware: no keys issued yet — allowing %s", path)
-            return await call_next(request)
+        # Accept both ?key= (direct) and ?access_key= (forwarded from external portal).
+        # If a URL param is present it is the credential; the cookie is only checked when
+        # no URL param was supplied at all.
+        if "access_key" in request.query_params or "key" in request.query_params:
+            key           = (
+                request.query_params.get("access_key", "")
+                or request.query_params.get("key", "")
+            ).strip()
+            update_cookie = True
+        else:
+            key           = request.cookies.get(_COOKIE_NAME, "").strip()
+            update_cookie = False
 
-        cookie_key = request.cookies.get(_COOKIE_NAME, "").strip()
-        # Accept both ?key= (direct) and ?access_key= (forwarded from external portal)
-        query_key  = (
-            request.query_params.get("access_key", "")
-            or request.query_params.get("key", "")
-        ).strip()
+        if not key:
+            log.info("AccessKeyMiddleware: denied %s %s — no credentials presented",
+                     request.method, path)
+            return _DENY
 
-        # Cookie check first (avoids a DB round-trip on every request once set).
-        if cookie_key:
-            _reason = _rejection_reason(cookie_key)
-            if _reason:
-                log.info(
-                    "AccessKeyMiddleware: cookie key pre-validation failed (%s) for %s",
-                    _reason, path,
-                )
-            elif await db.validate_access_key(cookie_key):
-                return await call_next(request)
-            else:
-                log.info("AccessKeyMiddleware: invalid/expired cookie key for %s", path)
+        if not await _validate_key(key, "query key" if update_cookie else "cookie", request.method, path):
+            return _DENY
 
-        # Query-param fallback: validate, set cookie, redirect to clean URL.
-        if query_key:
-            _reason = _rejection_reason(query_key)
-            if _reason:
-                log.info(
-                    "AccessKeyMiddleware: query key pre-validation failed (%s) for %s",
-                    _reason, path,
-                )
-            elif await db.validate_access_key(query_key):
-                clean_url = _strip_key_param(str(request.url))
-                resp = RedirectResponse(clean_url, status_code=302)
-                resp.set_cookie(
-                    _COOKIE_NAME,
-                    query_key,
-                    max_age=_COOKIE_MAX_AGE,
-                    httponly=True,
-                    samesite="lax",
-                )
-                log.info(
-                    "AccessKeyMiddleware: valid query key — setting cookie and redirecting to %s",
-                    clean_url,
-                )
-                return resp
-            else:
-                log.info("AccessKeyMiddleware: invalid/expired query key for %s", path)
+        # Key is valid. If it came from a query param, set cookie and redirect to clean URL.
+        if update_cookie:
+            clean_url = _strip_key_param(str(request.url))
+            resp = RedirectResponse(clean_url, status_code=302)
+            resp.set_cookie(
+                _COOKIE_NAME,
+                key,
+                max_age=_COOKIE_MAX_AGE,
+                httponly=True,
+                samesite="lax",
+            )
+            log.info(
+                "AccessKeyMiddleware: valid query key — setting cookie and redirecting to %s",
+                clean_url,
+            )
+            return resp
 
-        log.info("AccessKeyMiddleware: denied %s %s", request.method, path)
-        return _DENY
+        return await call_next(request)

@@ -38,6 +38,8 @@ import pytest_asyncio
 from asgi_lifespan import LifespanManager
 from httpx import ASGITransport, AsyncClient
 
+import db
+
 BROKER_HOST = "127.0.0.1"
 BROKER_PORT = 18830
 
@@ -162,6 +164,16 @@ async def live_client(mosquitto_broker, tmp_path: Path, monkeypatch):
             transport=ASGITransport(app=manager.app),
             base_url="http://test",
         ) as client:
+            import uuid as _uuid
+            from datetime import datetime, timedelta, timezone
+            _key = str(_uuid.uuid4())
+            _now = datetime.now(timezone.utc)
+            await db.create_access_key(
+                _key,
+                _now.isoformat(),
+                (_now + timedelta(days=30)).isoformat(),
+            )
+            client.cookies.set("ev_access_key", _key)
             yield client
 
 

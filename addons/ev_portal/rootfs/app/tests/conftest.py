@@ -202,10 +202,21 @@ async def patched_state(mock_mqtt: MagicMock, tmp_db: str):
 async def unit_client(patched_state) -> AsyncClient:
     """
     AsyncClient backed by ASGITransport (lifespan NOT triggered).
-    State is injected by patched_state.
+    State is injected by patched_state. A valid access key is pre-issued and
+    attached as a cookie so the AccessKeyMiddleware does not block test requests.
     """
     import main as m
+    import uuid
+    from datetime import datetime, timedelta, timezone
+    key = str(uuid.uuid4())
+    now = datetime.now(timezone.utc)
+    await db.create_access_key(
+        key,
+        now.isoformat(),
+        (now + timedelta(days=30)).isoformat(),
+    )
     async with AsyncClient(transport=ASGITransport(app=m.app), base_url="http://test") as c:
+        c.cookies.set("ev_access_key", key)
         yield c
 
 
@@ -360,4 +371,14 @@ async def live_client(mosquitto_broker, tmp_path: Path, monkeypatch, tmp_db: str
             transport=ASGITransport(app=manager.app),
             base_url="http://test",
         ) as c:
+            import uuid as _uuid
+            from datetime import datetime, timedelta, timezone
+            _key = str(_uuid.uuid4())
+            _now = datetime.now(timezone.utc)
+            await db.create_access_key(
+                _key,
+                _now.isoformat(),
+                (_now + timedelta(days=30)).isoformat(),
+            )
+            c.cookies.set("ev_access_key", _key)
             yield c

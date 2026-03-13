@@ -27,6 +27,7 @@ import asyncio
 import json
 import re
 import uuid
+from datetime import datetime, timedelta, timezone
 from typing import Any
 from unittest.mock import AsyncMock, patch
 
@@ -35,6 +36,7 @@ import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 
 import access
+import db
 import state
 from tests.conftest import (
     AUTHORIZE_RESPONSE_TOPIC,
@@ -257,7 +259,12 @@ async def test_start_page_with_cloudflare_headers(
 
     asyncio.create_task(_inject())
 
+    key = str(uuid.uuid4())
+    now = datetime.now(timezone.utc)
+    await db.create_access_key(key, now.isoformat(), (now + timedelta(days=30)).isoformat())
+
     async with _cf_client(m.app, client_ip=_CF_EDGE_IP) as c:
+        c.cookies.set("ev_access_key", key)
         resp = await c.get("/start")
 
     assert resp.status_code == 200
@@ -591,7 +598,12 @@ async def test_full_payment_workflow_cloudflare_headers(
 
     asyncio.create_task(_inject_booking())
 
+    key = str(uuid.uuid4())
+    now = datetime.now(timezone.utc)
+    await db.create_access_key(key, now.isoformat(), (now + timedelta(days=30)).isoformat())
+
     async with _cf_client(m.app) as c:
+        c.cookies.set("ev_access_key", key)
         start_resp = await c.get("/start")
         assert start_resp.status_code == 200, (
             f"GET /start failed: {start_resp.status_code} {start_resp.text[:200]}"

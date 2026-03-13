@@ -63,16 +63,6 @@ async def _issue_expired_key() -> str:
 
 
 # ---------------------------------------------------------------------------
-# Fail-open: no keys issued yet
-# ---------------------------------------------------------------------------
-
-async def test_no_keys_issued_allows_all_requests(key_client: AsyncClient):
-    """When no keys have been issued the middleware must not block any request."""
-    resp = await key_client.get("/health")
-    assert resp.status_code == 200
-
-
-# ---------------------------------------------------------------------------
 # Skip paths
 # ---------------------------------------------------------------------------
 
@@ -212,13 +202,50 @@ def test_rejection_reason_returns_none_for_valid_key():
     assert _rejection_reason(str(uuid.uuid4())) is None
 
 
-async def test_pre_validation_failure_is_logged(key_client: AsyncClient, caplog):
-    """A structurally invalid key must produce a pre-validation log entry."""
+import logging as _logging
+
+@pytest.mark.parametrize("setup,request_fn,expected_fragment", [
+    # No credentials at all
+    (
+        lambda: None,
+        lambda c: c.get("/start", follow_redirects=False),
+        "no credentials presented",
+    ),
+    # Query key fails stateless check
+    (
+        lambda: None,
+        lambda c: c.get("/start?key=not-a-real-key", follow_redirects=False),
+        "stateless check failed",
+    ),
+    # Cookie fails stateless check
+    (
+        lambda c: c.cookies.set("ev_access_key", "garbage"),
+        lambda c: c.get("/start", follow_redirects=False),
+        "stateless check failed",
+    ),
+])
+async def test_denied_log_includes_reason(key_client: AsyncClient, caplog, setup, request_fn, expected_fragment):
+    """The final 'denied' log line must explain why access was refused."""
     await _issue_key()  # disable fail-open
-    import logging
-    with caplog.at_level(logging.INFO, logger="access_key"):
-        await key_client.get("/start?key=not-a-real-key", follow_redirects=False)
-    assert any("pre-validation failed" in r.message for r in caplog.records)
+    if setup.__code__.co_varnames and 'c' in setup.__code__.co_varnames:
+        setup(key_client)
+    else:
+        setup()
+    with caplog.at_level(_logging.INFO, logger="access_key"):
+        await request_fn(key_client)
+    denied_messages = [r.message for r in caplog.records if "denied" in r.message]
+    assert denied_messages, "Expected a 'denied' log entry"
+    assert any(expected_fragment in m for m in denied_messages)
+
+
+async def test_db_rejection_logged_as_db_failure(key_client: AsyncClient, caplog):
+    """A structurally valid but DB-unknown key must log a DB-level denial."""
+    await _issue_key()  # disable fail-open; do NOT register the key we send
+    unknown = str(uuid.uuid4())  # valid UUID4, but not in the DB
+    with caplog.at_level(_logging.INFO, logger="access_key"):
+        await key_client.get(f"/start?key={unknown}", follow_redirects=False)
+    denied_messages = [r.message for r in caplog.records if "denied" in r.message]
+    assert any("DB" in m for m in denied_messages)
 
 
 # ---------------------------------------------------------------------------
