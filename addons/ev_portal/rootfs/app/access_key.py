@@ -12,6 +12,7 @@ preventing lockout on first deployment.
 """
 
 import logging
+import re
 from urllib.parse import urlencode, urlparse, parse_qs, urlunparse
 
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -36,6 +37,32 @@ _DENY = Response(
     status_code=503,
     media_type="text/html",
 )
+
+
+# UUID4 canonical form: xxxxxxxx-xxxx-4xxx-[89ab]xxx-xxxxxxxxxxxx (lowercase)
+_UUID4_RE = re.compile(
+    r'^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'
+)
+
+
+def _rejection_reason(value: str):
+    """Return a short human-readable string explaining why value is not a plausible
+    access key, or None if it passes all structural checks.
+
+    Checks are ordered cheapest-first so we bail as early as possible.
+    """
+    if not value:
+        return "empty value"
+    if len(value) != 36:
+        return f"wrong length ({len(value)}, expected 36)"
+    if not _UUID4_RE.match(value):
+        return "not a valid UUID4 format (must be lowercase, version 4)"
+    return None
+
+
+def _is_plausible_key(value: str) -> bool:
+    """Return True only if value passes all structural UUID4 checks."""
+    return _rejection_reason(value) is None
 
 
 def _strip_key_param(url_str: str) -> str:
@@ -74,15 +101,27 @@ class AccessKeyMiddleware(BaseHTTPMiddleware):
         ).strip()
 
         # Cookie check first (avoids a DB round-trip on every request once set).
-        if cookie_key and await db.validate_access_key(cookie_key):
-            return await call_next(request)
-
         if cookie_key:
-            log.info("AccessKeyMiddleware: invalid/expired cookie key for %s", path)
+            _reason = _rejection_reason(cookie_key)
+            if _reason:
+                log.info(
+                    "AccessKeyMiddleware: cookie key pre-validation failed (%s) for %s",
+                    _reason, path,
+                )
+            elif await db.validate_access_key(cookie_key):
+                return await call_next(request)
+            else:
+                log.info("AccessKeyMiddleware: invalid/expired cookie key for %s", path)
 
         # Query-param fallback: validate, set cookie, redirect to clean URL.
         if query_key:
-            if await db.validate_access_key(query_key):
+            _reason = _rejection_reason(query_key)
+            if _reason:
+                log.info(
+                    "AccessKeyMiddleware: query key pre-validation failed (%s) for %s",
+                    _reason, path,
+                )
+            elif await db.validate_access_key(query_key):
                 clean_url = _strip_key_param(str(request.url))
                 resp = RedirectResponse(clean_url, status_code=302)
                 resp.set_cookie(
@@ -97,7 +136,8 @@ class AccessKeyMiddleware(BaseHTTPMiddleware):
                     clean_url,
                 )
                 return resp
-            log.info("AccessKeyMiddleware: invalid/expired query key for %s", path)
+            else:
+                log.info("AccessKeyMiddleware: invalid/expired query key for %s", path)
 
         log.info("AccessKeyMiddleware: denied %s %s", request.method, path)
         return _DENY

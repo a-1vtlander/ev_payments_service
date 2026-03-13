@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime, timedelta, timezone
+from unittest.mock import AsyncMock, patch
 
 import pytest
 import pytest_asyncio
@@ -22,6 +23,7 @@ from httpx import ASGITransport, AsyncClient
 
 import db
 import state
+from access_key import _is_plausible_key, _rejection_reason
 
 
 # ---------------------------------------------------------------------------
@@ -151,3 +153,93 @@ async def test_missing_cookie_no_param_returns_503(key_client: AsyncClient):
     await _issue_key()
     resp = await key_client.get("/start", follow_redirects=False)
     assert resp.status_code == 503
+
+
+# ---------------------------------------------------------------------------
+# _is_plausible_key — unit tests (no fixtures, no DB, no network)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("value,expected", [
+    # Valid UUID4 — all four legal variant nibbles (8, 9, a, b)
+    ("550e8400-e29b-4000-8000-000000000000",                           True),
+    ("550e8400-e29b-4000-9000-000000000000",                           True),
+    ("550e8400-e29b-4000-a000-000000000000",                           True),
+    ("550e8400-e29b-4000-b000-000000000000",                           True),
+    # Randomly generated (covers whatever variant Python uuid4 picks)
+    (str(uuid.uuid4()),                                                True),
+    # Empty / whitespace
+    ("",                                                               False),
+    ("   ",                                                            False),
+    # Too short / too long
+    ("550e8400-e29b-41d4-a716",                                        False),
+    ("550e8400-e29b-41d4-a716-446655440000x",                          False),
+    # Non-hex characters
+    ("zzzzzzzz-zzzz-4zzz-azzz-zzzzzzzzzzzz",                          False),
+    # Uppercase (keys are always lowercase UUID4)
+    ("550E8400-E29B-41D4-A716-446655440000",                           False),
+    # Wrong version nibble (UUID1, not UUID4)
+    ("550e8400-e29b-11d4-a716-446655440000",                           False),
+    # Wrong variant nibble (not 8/9/a/b)
+    ("550e8400-e29b-41d4-c716-446655440000",                           False),
+    # Hyphens in wrong positions (no hyphens)
+    ("550e8400e29b41d4a716446655440000",                               False),
+    # Looks UUID-shaped but variant nibble is invalid
+    ("550e8400-e29b-4000-0000-000000000000",                           False),
+])
+def test_is_plausible_key(value: str, expected: bool):
+    assert _is_plausible_key(value) is expected
+
+
+# ---------------------------------------------------------------------------
+# _rejection_reason — verify specific log messages
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("value,fragment", [
+    ("",                                       "empty value"),
+    ("too-short",                              "wrong length"),
+    ("x" * 37,                                "wrong length"),
+    ("550E8400-E29B-41D4-A716-446655440000",  "UUID4 format"),
+    ("550e8400-e29b-11d4-a716-446655440000",  "UUID4 format"),  # UUID1
+    ("550e8400-e29b-41d4-c716-446655440000",  "UUID4 format"),  # bad variant
+])
+def test_rejection_reason_describes_failure(value: str, fragment: str):
+    reason = _rejection_reason(value)
+    assert reason is not None
+    assert fragment in reason
+
+
+def test_rejection_reason_returns_none_for_valid_key():
+    assert _rejection_reason(str(uuid.uuid4())) is None
+
+
+async def test_pre_validation_failure_is_logged(key_client: AsyncClient, caplog):
+    """A structurally invalid key must produce a pre-validation log entry."""
+    await _issue_key()  # disable fail-open
+    import logging
+    with caplog.at_level(logging.INFO, logger="access_key"):
+        await key_client.get("/start?key=not-a-real-key", follow_redirects=False)
+    assert any("pre-validation failed" in r.message for r in caplog.records)
+
+
+# ---------------------------------------------------------------------------
+# DB isolation: invalid keys must never reach db.validate_access_key
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("param,garbage", [
+    ("key",        "not-a-real-key"),
+    ("key",        ""),
+    ("key",        "x" * 36),
+    ("key",        "550E8400-E29B-41D4-A716-446655440000"),  # uppercase UUID
+    ("access_key", "garbage"),
+])
+async def test_implausible_key_never_hits_db(
+    key_client: AsyncClient, param: str, garbage: str
+):
+    """Structurally invalid keys must be rejected before any DB access."""
+    await _issue_key()  # ensure fail-open doesn't apply
+    with patch("db.validate_access_key", new_callable=AsyncMock) as mock_validate:
+        resp = await key_client.get(
+            f"/start?{param}={garbage}", follow_redirects=False
+        )
+    assert resp.status_code == 503
+    mock_validate.assert_not_called()
