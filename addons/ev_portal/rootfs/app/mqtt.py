@@ -37,6 +37,10 @@ def build_mqtt_client(mqtt_cfg: dict, subscribed_topics: list) -> mqtt.Client:
             for topic in subscribed_topics:
                 client.subscribe(topic, qos=1)
                 log.info("Subscribed to: %s", topic)
+            # Publish HA discovery + current state on every connect so HA
+            # picks them up even after a broker restart or HA reload.
+            mqtt_ha_device.publish_discovery(client)
+            mqtt_ha_device.publish_state(client)
         else:
             log.warning("MQTT connect failed, reason code: %s", reason_code)
 

@@ -93,18 +93,6 @@ async def lifespan(app: FastAPI):
     except Exception as exc:
         log.error("Could not initiate MQTT connection: %s", exc)
 
-    # ── HA MQTT device discovery + initial state ───────────────────────────
-    # Wait briefly for the connection to be established before publishing.
-    for _ in range(50):
-        if state.mqtt_client and state.mqtt_client.is_connected():
-            break
-        await asyncio.sleep(0.1)
-    if state.mqtt_client and state.mqtt_client.is_connected():
-        mqtt_ha_device.publish_discovery(state.mqtt_client)
-        mqtt_ha_device.publish_state(state.mqtt_client)
-    else:
-        log.warning("MQTT not connected at startup – HA device discovery will be published on next connect")
-
     # ── Background tasks ─────────────────────────────────────────────────────
     _finalize_task = asyncio.create_task(finalize_session_consumer())
 
