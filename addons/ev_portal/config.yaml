@@ -3,7 +3,7 @@ description: "Payment Manager AddOn for EV Sessions - Uses LAN-local HTTPS porta
 version: "1.1.38"
 slug: "ev_portal"
 init: false
-webui: http://baselander-ev.admin.extravio.co/admin
+webui: "https://baselander-ev.admin.extravio.co/admin"
 maintainer: 1VTLander
 url: "https://github.com/a-1vtlander/ev_payments_service"
 documentation: "https://github.com/a-1vtlander/ev_payments_service/blob/main/addons/ev_portal/README.md"
