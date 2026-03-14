@@ -1,9 +1,9 @@
 name: "EV Charger Portal"
 description: "Payment Manager AddOn for EV Sessions - Uses LAN-local HTTPS portal via MQTT with an HTTPS admin server"
-version: "1.1.36"
+version: "1.1.37"
 slug: "ev_portal"
 init: false
-webui: https://[HOST]:[PORT:8091]/admin
+webui: http://baselander-ev.admin.extravio.co/admin
 maintainer: 1VTLander
 url: "https://github.com/a-1vtlander/ev_payments_service"
 documentation: "https://github.com/a-1vtlander/ev_payments_service/blob/main/addons/ev_portal/README.md"

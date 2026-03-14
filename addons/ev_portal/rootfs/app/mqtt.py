@@ -10,6 +10,7 @@ import logging
 
 import paho.mqtt.client as mqtt
 
+import mqtt_ha_device
 import state
 
 log = logging.getLogger(__name__)
@@ -54,6 +55,12 @@ def build_mqtt_client(mqtt_cfg: dict, subscribed_topics: list) -> mqtt.Client:
         """Route incoming messages to the asyncio queue registered for that topic."""
         payload = message.payload.decode(errors="replace")
         log.info("Received MQTT message on %s: %s", message.topic, payload)
+
+        # HA device command topics are handled synchronously (no queue needed).
+        if message.topic in mqtt_ha_device._COMMAND_TOPICS:
+            mqtt_ha_device.handle_command(message.topic, payload, client)
+            return
+
         queue = state._topic_queues.get(message.topic)
         if queue is None:
             log.warning("No queue registered for topic %s – dropping message", message.topic)

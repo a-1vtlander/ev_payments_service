@@ -13,6 +13,7 @@ import state
 from config import load_config
 from finalize import finalize_session_consumer
 from mqtt import build_mqtt_client
+import mqtt_ha_device
 from square import fetch_first_location_id
 
 log = logging.getLogger(__name__)
@@ -80,7 +81,8 @@ async def lifespan(app: FastAPI):
         state._authorize_response_topic: asyncio.Queue(),
         state._finalize_session_topic:   asyncio.Queue(),
     }
-    subscribed_topics = list(state._topic_queues.keys())
+    # HA device command topics are routed directly in on_message (no queue).
+    subscribed_topics = list(state._topic_queues.keys()) + mqtt_ha_device.command_topics()
 
     # ── MQTT ───────────────────────────────────────────────────────────────
     state.mqtt_client = build_mqtt_client(mqtt_cfg, subscribed_topics)
@@ -90,6 +92,18 @@ async def lifespan(app: FastAPI):
         log.info("MQTT loop started, connecting to %s:%s", mqtt_cfg["host"], mqtt_cfg["port"])
     except Exception as exc:
         log.error("Could not initiate MQTT connection: %s", exc)
+
+    # ── HA MQTT device discovery + initial state ───────────────────────────
+    # Wait briefly for the connection to be established before publishing.
+    for _ in range(50):
+        if state.mqtt_client and state.mqtt_client.is_connected():
+            break
+        await asyncio.sleep(0.1)
+    if state.mqtt_client and state.mqtt_client.is_connected():
+        mqtt_ha_device.publish_discovery(state.mqtt_client)
+        mqtt_ha_device.publish_state(state.mqtt_client)
+    else:
+        log.warning("MQTT not connected at startup – HA device discovery will be published on next connect")
 
     # ── Background tasks ─────────────────────────────────────────────────────
     _finalize_task = asyncio.create_task(finalize_session_consumer())
