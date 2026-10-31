@@ -87,10 +87,12 @@ def load_config() -> Dict[str, Any]:
         cred_field   = "square_production_app_id / square_production_access_token"
 
     if not app_id or not access_token:
-        raise RuntimeError(
-            f"square_sandbox={sandbox}: {cred_field} must both be set.  "
-            "Update your add-on configuration."
+        log.warning(
+            "square_sandbox=%s: %s are not set – Square payments will be "
+            "unavailable until credentials are configured.",
+            sandbox, cred_field,
         )
+        app_id = access_token = ""
 
     home_id    = (opts.get("home_id")    or "").strip()
     charger_id = (opts.get("charger_id") or "").strip()

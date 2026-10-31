@@ -43,3 +43,5 @@ ev_portal/rootfs/app/tests/dev_options.json
 
 # macOS
 .DS_Store
+addons/ev_portal/rootfs/app/tests/tls/keymgr.crt
+addons/ev_portal/rootfs/app/tests/tls/keymgr.key

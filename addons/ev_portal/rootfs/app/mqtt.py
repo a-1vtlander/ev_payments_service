@@ -35,7 +35,7 @@ def build_mqtt_client(mqtt_cfg: dict, subscribed_topics: list) -> mqtt.Client:
         if reason_code == 0:
             log.info("MQTT connected to %s:%s", mqtt_cfg.get("host"), mqtt_cfg.get("port", 1883))
             for topic in subscribed_topics:
-                client.subscribe(topic, qos=1)
+                client.subscribe(topic, qos=2)
                 log.info("Subscribed to: %s", topic)
             # Publish HA discovery + current state on every connect so HA
             # picks them up even after a broker restart or HA reload.

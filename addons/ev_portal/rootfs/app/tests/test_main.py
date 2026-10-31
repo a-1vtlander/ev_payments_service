@@ -8,6 +8,7 @@ Only config and MQTT client construction tests remain here.
 from __future__ import annotations
 
 import json
+from unittest.mock import patch
 
 import pytest
 
@@ -75,6 +76,30 @@ def test_build_mqtt_client_handles_none_credentials() -> None:
     # Should not raise AttributeError
     client = m.build_mqtt_client(mqtt_cfg, [])
     assert client is not None
+
+
+def test_build_mqtt_client_subscribes_to_all_topics_at_qos_2() -> None:
+    """Every inbound topic, including booking responses, requests QoS 2."""
+    import mqtt as m
+
+    mqtt_cfg = {"host": "localhost", "port": 1883}
+    topics = [
+        "ev/charger/home/charger/booking/response",
+        "ev/charger/home/charger/booking/authorize_session/response",
+        "ev/charger/home/charger/booking/finalize_session",
+        "homeassistant/device/command",
+    ]
+
+    with patch.object(m.mqtt, "Client") as client_factory, \
+         patch.object(m.mqtt_ha_device, "publish_discovery"), \
+         patch.object(m.mqtt_ha_device, "publish_state"):
+        client = client_factory.return_value
+        m.build_mqtt_client(mqtt_cfg, topics)
+        client.on_connect(client, None, {}, 0, None)
+
+    assert client.subscribe.call_args_list == [
+        ((topic,), {"qos": 2}) for topic in topics
+    ]
 
 
 # ---------------------------------------------------------------------------
